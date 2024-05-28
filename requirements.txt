@@ -5,3 +5,4 @@ torch==2.3.0+cu118
 scikit-learn==1.4.2
 matplotlib==3.8.4
 pillow==10.3.0
+opencv-python==4.9.0.80
