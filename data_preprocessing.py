@@ -29,14 +29,6 @@ image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
 
 thumbnails_images_dir = os.path.join(THUMBNAILS_DIR, 'thumbnails', 'images')
 
-def get_unique_path(dest_path):
-    base, extension = os.path.splitext(dest_path)
-    counter = 1
-    while os.path.exists(dest_path):
-        dest_path = f"{base}_{counter}{extension}"
-        counter += 1
-    return dest_path
-
 def resize_image(image_path, size=(1280, 720)):
     with Image.open(image_path) as img:
         img = img.resize(size, Image.LANCZOS)
@@ -49,7 +41,6 @@ for root, dirs, files in os.walk(thumbnails_images_dir):
         if os.path.splitext(file)[1].lower() in image_extensions:
             src_path = os.path.join(root, file)
             dest_path = os.path.join(images_dir, file)
-            dest_path = get_unique_path(dest_path)  # Ensure unique file path
             try:
                 shutil.move(src_path, dest_path)
                 resize_image(dest_path)  # Resize image to 1280 x 720
