@@ -1,28 +1,23 @@
 import os
 import cv2
 import torch
-import requests
 
 THUMBNAILS_DIR = 'thumbnail'
-
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f"Using device: {device}")
-
-def create_image_path_dict(THUMBNAILS_DIR):
-    image_path_dict = {}
-    for root, dirs, files in os.walk(f"{THUMBNAILS_DIR}/images", topdown=False):
-        for file in files:
-            if file.endswith(('.png', '.jpg', '.jpeg')):  # Ensure you're capturing valid image files
-                image_id = file[:-4]  # Assuming the ID is the filename without the extension
-                image_path_dict[image_id] = os.path.join(root, file)
-    return image_path_dict
-
 class GetImage:
-    def __init__(self, image_id, image_width, image_height, image_path_dict):
+    def __init__(self, image_id, image_width, image_height, thumbnail_directory):
         self.image_id = image_id
         self.image_width = image_width
         self.image_height = image_height
-        self.image_path_dict = image_path_dict
+        self.image_path_dict = self.create_image_path_dict(thumbnail_directory)
+
+    def create_image_path_dict(THUMBNAILS_DIR):
+        image_path_dict = {}
+        for root, dirs, files in os.walk(f"{THUMBNAILS_DIR}/images", topdown=False):
+            for file in files:
+                if file.endswith(('.png', '.jpg', '.jpeg')):  # Ensure you're capturing valid image files
+                    image_id = file[:-4]  # Assuming the ID is the filename without the extension
+                    image_path_dict[image_id] = os.path.join(root, file)
+        return image_path_dict
 
     def get(self):
         image_path = self.image_path_dict.get(self.image_id)
@@ -49,6 +44,5 @@ class GetImage:
         normalized_image = (image - mean) / std
         return normalized_image
 
-image_path_dict = create_image_path_dict(THUMBNAILS_DIR)
-image_getter = GetImage(image_id='MnmrEMbDdyA', image_width=128, image_height=72, image_path_dict=image_path_dict)
+image_getter = GetImage(image_id='MnmrEMbDdyA', image_width=128, image_height=72, thumbnail_directory=THUMBNAILS_DIR)
 image_tensor = image_getter.get()
