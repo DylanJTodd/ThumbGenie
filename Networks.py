@@ -35,7 +35,7 @@ class CategoryTitleEmbeddingNet(nn.Module):
         
     def forward(self, category_indices:torch.Tensor, title_indices:torch.Tensor) -> torch.Tensor:
         """
-        
+        Forward pass of the neural network. Does the work of converting the category(ies) and title(s) to a single dense embedded vector
 
         Args:
             category_indices:       A tensor of unique numerical indices that represent the category
