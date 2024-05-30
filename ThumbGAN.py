@@ -1,13 +1,14 @@
 import os
 import cv2
 import torch
+from . import Networks
 
 THUMBNAILS_DIR = 'thumbnail' #Do NOT change unless you know what you're doing
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
-#Create a dictionary for images
+#Create a dictionary for fast image retreival 
 image_path_dict = {}
 for root, dirs, files in os.walk(f"{THUMBNAILS_DIR}/images", topdown=False):
     for file in files:
@@ -24,16 +25,17 @@ class GetImage:
 
     def get(self):
         image_path = self.image_path_dict.get(self.image_id)
+
         if not image_path:
             print(f"Image ID {self.image_id} was not found.")
             return None
-
+        
         image = cv2.imread(image_path)
         if image is None:
             print(f"Failed to read image at {image_path}.")
             return None
 
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # Ensure image is in RGB format
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         image = cv2.resize(image, (self.image_width, self.image_height))
         tensor = torch.tensor(image, dtype=torch.float32)
         tensor = tensor.permute(2, 0, 1)  # Change to (channels, width, height)
@@ -41,7 +43,7 @@ class GetImage:
         return tensor
 
     def normalize(self, image):
-        image /= 255.0  # Normalize to range [0, 1]
+        image /= 255.0
         mean = torch.mean(image, dim=[1, 2], keepdim=True)
         std = torch.std(image, dim=[1, 2], keepdim=True)
         normalized_image = (image - mean) / std
@@ -49,6 +51,3 @@ class GetImage:
 
 image_getter = GetImage(image_id='yIfrEMhtu2o', image_width=128, image_height=72, image_path_dict=image_path_dict)
 image_tensor = image_getter.get()
-
-
-#Make network to convert categories to size 10 dense vectors. Map these to their key. 
