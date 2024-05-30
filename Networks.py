@@ -56,3 +56,47 @@ class CategoryTitleEmbeddingNet(nn.Module):
         final_output = self.fully_connected4(combined_output)
         return final_output
     
+
+class Generator(nn.Module):
+    def __init__(self, embedding_dim, noise_dim, img_channels, img_width, img_height):
+        super(Generator, self).__init__()
+        self.img_width = img_width
+        self.img_height = img_height
+        self.img_channels = img_channels
+
+        self.fc1 = nn.Linear(embedding_dim + noise_dim, 128)
+        self.fc2 = nn.Linear(128, 256)
+        self.fc3 = nn.Linear(256, 512)
+        self.fc4 = nn.Linear(512, img_channels * img_width * img_height)
+        self.tanh = nn.Tanh()
+
+    def forward(self, embedding, noise):
+        x = torch.cat((embedding, noise), dim=1)
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        x = torch.relu(self.fc3(x))
+        x = self.tanh(self.fc4(x))
+        x = x.view(-1, self.img_channels, self.img_height, self.img_width)
+        return x
+
+class Discriminator(nn.Module):
+    def __init__(self, embedding_dim, img_channels, img_width, img_height):
+        super(Discriminator, self).__init__()
+        self.img_width = img_width
+        self.img_height = img_height
+        self.img_channels = img_channels
+
+        self.fc1 = nn.Linear(embedding_dim + img_channels * img_width * img_height, 512)
+        self.fc2 = nn.Linear(512, 256)
+        self.fc3 = nn.Linear(256, 128)
+        self.fc4 = nn.Linear(128, 1)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, embedding, img):
+        img_flat = img.view(img.size(0), -1)
+        x = torch.cat((embedding, img_flat), dim=1)
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        x = torch.relu(self.fc3(x))
+        x = self.sigmoid(self.fc4(x))
+        return x
