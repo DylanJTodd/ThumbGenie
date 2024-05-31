@@ -10,7 +10,7 @@ from torchvision import models
 from torchvision.utils import save_image as torchvision_save_image
 from torchvision.transforms import ToTensor, Normalize, Resize
 from torch.utils.data import Dataset, DataLoader
-import pandas as pd
+import pandas
 import Networks
 import streamlit as st
 import matplotlib.pyplot as plt
@@ -31,13 +31,13 @@ print(f"Using device: {device}")
 
 # Data Preparation
 class GetImage:
-    def __init__(self, image_id, resolution, thumbnail_dir):
+    def __init__(self, image_id: str, resolution: tuple[int, int], thumbnail_dir:str) -> None:
         self.image_id = image_id
         self.resolution = resolution
         self.thumbnail_dir = thumbnail_dir
         self.extensions = ['.jpg', '.jpeg', '.png', '.bmp']
 
-    def get(self):
+    def get(self) -> torch.Tensor:
         image_path = self._find_image_path()
         if not image_path:
             print(f"Image ID {self.image_id} was not found.")
@@ -53,7 +53,7 @@ class GetImage:
         tensor = ToTensor()(image)
         return tensor
 
-    def _find_image_path(self):
+    def _find_image_path(self) -> str | None:
         for ext in self.extensions:
             image_path = os.path.join(self.thumbnail_dir, f"images/{self.image_id}{ext}")
             if os.path.exists(image_path):
@@ -61,7 +61,7 @@ class GetImage:
         return None
     
 class ThumbnailDataset(Dataset):
-    def __init__(self, metadata_df, thumbnail_dir, resolution, glove):
+    def __init__(self, metadata_df:pandas.DataFrame , thumbnail_dir:str, resolution:tuple[int,int], glove:GloVe) -> None:
         self.metadata_df = metadata_df
         self.thumbnail_dir = thumbnail_dir
         self.resolution = resolution
@@ -71,10 +71,10 @@ class ThumbnailDataset(Dataset):
         # Calculate normalization parameters
         self.mean, self.std = self.calculate_normalization_params()
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.metadata_df)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx:int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         row = self.metadata_df.iloc[idx]
         image_id = row['Id']
         category = row['Category']
@@ -93,21 +93,21 @@ class ThumbnailDataset(Dataset):
 
         return image_tensor, category_tensor, title_indices
     
-    def _load_image(self, image_id):
+    def _load_image(self, image_id:str) -> torch.Tensor:
         get_image = GetImage(image_id, self.resolution, self.thumbnail_dir)
         return get_image.get()
 
-    def _normalize(self, image):
+    def _normalize(self, image:torch.Tensor) -> torch.Tensor:
         transform = Normalize(mean=self.mean, std=self.std)
         return transform(image)
 
-    def _tokenize_and_embed_title(self, title):
+    def _tokenize_and_embed_title(self, title:str) -> list[int]:
         tokens = title.split()[:self.title_max_length]
         indices = [self.glove.stoi[token] if token in self.glove.stoi else self.glove.stoi['unk'] for token in tokens]
         indices += [0] * (self.title_max_length - len(indices))
         return indices
 
-    def calculate_normalization_params(self):
+    def calculate_normalization_params(self) -> tuple[torch.Tensor, torch.Tensor]:
         # Calculate mean and std of pixel values across the dataset
         mean = torch.zeros(3)
         std = torch.zeros(3)
@@ -124,7 +124,7 @@ class ThumbnailDataset(Dataset):
             std /= len(self.metadata_df)
             return mean, std
 
-metadata_df = pd.read_csv(METADATA_FILE)
+metadata_df = pandas.read_csv(METADATA_FILE)
 label_encoder = LabelEncoder()
 metadata_df['Category'] = label_encoder.fit_transform(metadata_df['Category'])
 label_mapping = dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))
@@ -172,7 +172,7 @@ optimizer_D = optim.Adam(discriminator.parameters(), lr=0.0002, betas=(0.5, 0.99
 n_epochs = 5
 sample_interval = 100
 
-def progressive_resize(image, target_resolution):
+def progressive_resize(image:torch.Tensor, target_resolution: tuple[int,int]) -> torch.Tensor:
     return Resize(target_resolution)(image)
 
 for epoch in range(n_epochs):
@@ -218,6 +218,7 @@ for epoch in range(n_epochs):
             param.requires_grad = True
         generator.img_size = new_resolution[0]
         discriminator.img_size = new_resolution[0]
+
 
 # Streamlit for visualization
 st.title("Generated Thumbnails")
