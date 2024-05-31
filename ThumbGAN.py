@@ -143,7 +143,7 @@ for param in resnet.parameters():
 
 # Instantiate the dataset and dataloader
 thumbnail_dataset = ThumbnailDataset(metadata_df, THUMBNAILS_DIR, START_RESOLUTION, glove)
-dataloader = DataLoader(thumbnail_dataset, batch_size=BATCH_SIZE, shuffle=True)
+dataloader = DataLoader(thumbnail_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
 
 # Instantiate the embedding network
 num_categories = len(metadata_df['Category'].unique())
