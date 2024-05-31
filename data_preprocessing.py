@@ -1,5 +1,5 @@
 import os
-import torch
+import pandas
 import shutil
 import requests
 import zipfile
@@ -11,7 +11,7 @@ images_dir = os.path.join(THUMBNAILS_DIR, 'images')
 os.makedirs(images_dir, exist_ok=True)
 
 # Download the dataset
-url = "https://tinyurl.com/ThumbnailDataset"
+url = "https://tinyurl.com/YoutubeThumbnailLink"
 print("Downloading dataset...")
 response = requests.get(url)
 with open("dataset.zip", "wb") as file:
@@ -70,6 +70,26 @@ if not os.listdir(thumbnails_images_dir):
 thumbnails_subdir = os.path.join(THUMBNAILS_DIR, 'thumbnails')
 if not os.listdir(thumbnails_subdir):
     os.rmdir(thumbnails_subdir)
+
+print("Cleaning up metadata...")
+
+# Load the metadata file
+metadata_path = os.path.join(THUMBNAILS_DIR, 'metadata.csv')
+metadata = pandas.read_csv(metadata_path)
+
+# Check for each row if the corresponding image file exists
+def image_exists(row):
+    for ext in image_extensions:
+        image_path = os.path.join(images_dir, f"{row['Id']}{ext}")
+        if os.path.exists(image_path):
+            return True
+    return False
+
+# Filter the metadata to keep only rows with existing images
+cleaned_metadata = metadata[metadata.apply(image_exists, axis=1)]
+
+# Save the cleaned metadata back to the file
+cleaned_metadata.to_csv(metadata_path, index=False)
 
 print("All operations completed successfully!")
 print("")
