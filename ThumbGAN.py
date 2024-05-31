@@ -22,7 +22,7 @@ THUMBNAILS_DIR = 'thumbnail'
 METADATA_FILE = './thumbnail/metadata.csv'
 BATCH_SIZE = 64
 START_RESOLUTION = (128, 72)
-TARGET_RESOLUTION = (256, 144)
+TARGET_RESOLUTION = (1280, 720)
 TITLE_MAX_LENGTH = 15
 
 # Device setup
@@ -47,7 +47,7 @@ class GetImage:
         if image is None:
             print(f"Failed to read image at {image_path}.")
             return None
-
+        
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         image = cv2.resize(image, self.resolution)
         tensor = ToTensor()(image)
@@ -160,8 +160,8 @@ category_title_embedding_net = Networks.CategoryTitleEmbeddingNet(
 
 # Instantiate the GAN models
 noise_dim = 100
-generator = Networks.Generator(embedding_dim=category_embedding_dim + title_embedding_dim * TITLE_MAX_LENGTH, noise_dim=noise_dim, img_channels=3, img_size=START_RESOLUTION[0]).to(device)
-discriminator = Networks.Discriminator(embedding_dim=category_embedding_dim + title_embedding_dim * TITLE_MAX_LENGTH, img_channels=3, img_size=START_RESOLUTION[0]).to(device)
+generator = Networks.Generator(embedding_dim=1, noise_dim=noise_dim, img_channels=3, img_size=START_RESOLUTION).to(device)
+discriminator = Networks.Discriminator(embedding_dim=category_embedding_dim + title_embedding_dim * TITLE_MAX_LENGTH, img_channels=3, img_size=START_RESOLUTION).to(device)
 
 # Loss and optimizers
 adversarial_loss = nn.BCELoss()
@@ -169,8 +169,9 @@ optimizer_G = optim.Adam(generator.parameters(), lr=0.0002, betas=(0.5, 0.999))
 optimizer_D = optim.Adam(discriminator.parameters(), lr=0.0002, betas=(0.5, 0.999))
 
 # Training loop
-n_epochs = 5
+n_epochs = 5   
 sample_interval = 100
+
 
 def progressive_resize(image:torch.Tensor, target_resolution: tuple[int,int]) -> torch.Tensor:
     return Resize(target_resolution)(image)

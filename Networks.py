@@ -48,8 +48,10 @@ class CategoryTitleEmbeddingNet(nn.Module):
         category_embedded = self.category_embedding(category_indices)
         title_embedded = self.title_embedding(title_indices)
         title_embedded = title_embedded.view(title_embedded.size(0), -1)
-        combined_embeddings = torch.cat((category_embedded, title_embedded), dim=1)
+        category_embedded = category_embedded.view(category_embedded.size(0), -1)
+    
 
+        combined_embeddings = torch.cat((category_embedded, title_embedded), dim=1)
         combined_output = torch.relu(self.fully_connected1(combined_embeddings))
         combined_output = torch.relu(self.fully_connected2(combined_output))
         combined_output = torch.relu(self.fully_connected3(combined_output))
@@ -59,27 +61,30 @@ class CategoryTitleEmbeddingNet(nn.Module):
 
 class Generator(nn.Module):
     def __init__(self, embedding_dim, noise_dim, img_channels, img_size):
+        self.img_size = img_size
         super(Generator, self).__init__()
         self.fc1 = nn.Linear(embedding_dim + noise_dim, 128)
         self.fc2 = nn.Linear(128, 256)
         self.fc3 = nn.Linear(256, 512)
-        self.fc4 = nn.Linear(512, img_channels * img_size * img_size)
+        self.fc4 = nn.Linear(512, img_channels * img_size[0] * img_size[1])
         self.tanh = nn.Tanh()
 
     def forward(self, embedding, noise):
+        embedding.unsqueeze_(1)
+
         x = torch.cat((embedding, noise), dim=1)
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
         x = torch.relu(self.fc3(x))
         x = self.tanh(self.fc4(x))
-        x = x.view(-1, 3, self.img_size, self.img_size)
+        x = x.view(-1, 3, self.img_size[0], self.img_size[1])
         return x
     
 
 class Discriminator(nn.Module):
     def __init__(self, embedding_dim, img_channels, img_size):
         super(Discriminator, self).__init__()
-        self.fc1 = nn.Linear(embedding_dim + img_channels * img_size * img_size, 512)
+        self.fc1 = nn.Linear(embedding_dim + img_channels * img_size[0] * img_size[1], 512)
         self.fc2 = nn.Linear(512, 256)
         self.fc3 = nn.Linear(256, 128)
         self.fc4 = nn.Linear(128, 1)
