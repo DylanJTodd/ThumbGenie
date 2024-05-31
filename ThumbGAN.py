@@ -31,7 +31,7 @@ print(f"Using device: {device}")
 
 # Data Preparation
 class GetImage:
-    def __init__(self, image_id: str, resolution: tuple[int, int], thumbnail_dir:str) -> None:
+    def __init__(self, image_id:str, resolution:tuple[int, int], thumbnail_dir:str) -> None:
         self.image_id = image_id
         self.resolution = resolution
         self.thumbnail_dir = thumbnail_dir
@@ -123,7 +123,7 @@ class ThumbnailDataset(Dataset):
             mean /= len(self.metadata_df)
             std /= len(self.metadata_df)
             return mean, std
-
+        
 metadata_df = pandas.read_csv(METADATA_FILE)
 label_encoder = LabelEncoder()
 metadata_df['Category'] = label_encoder.fit_transform(metadata_df['Category'])
@@ -143,7 +143,7 @@ for param in resnet.parameters():
 
 # Instantiate the dataset and dataloader
 thumbnail_dataset = ThumbnailDataset(metadata_df, THUMBNAILS_DIR, START_RESOLUTION, glove)
-dataloader = DataLoader(thumbnail_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
+dataloader = DataLoader(thumbnail_dataset, batch_size=BATCH_SIZE, shuffle=True)
 
 # Instantiate the embedding network
 num_categories = len(metadata_df['Category'].unique())
