@@ -6,7 +6,7 @@ import torch.optim as optim
 import torchtext
 torchtext.disable_torchtext_deprecation_warning()
 from torchtext.vocab import GloVe
-from torchvision import models
+from torchvision.models import resnet50, ResNet50_Weights
 from torchvision.utils import save_image as torchvision_save_image
 from torchvision.transforms import ToTensor, Normalize, Resize
 from torch.utils.data import Dataset, DataLoader
@@ -136,7 +136,7 @@ vocab_size = len(glove.itos)
 embedding_dim = glove.dim
 
 # Pretrained ResNet model for feature extraction
-resnet = models.resnet50(weights=True)
+resnet = resnet50(weights=ResNet50_Weights.DEFAULT)
 resnet = torch.nn.Sequential(*list(resnet.children())[:-1])
 for param in resnet.parameters():
     param.requires_grad = False
