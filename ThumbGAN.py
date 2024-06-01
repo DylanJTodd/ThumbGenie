@@ -161,7 +161,7 @@ category_title_embedding_net = Networks.CategoryTitleEmbeddingNet(
 # Instantiate the GAN models
 noise_dim = 100
 generator = Networks.Generator(embedding_dim=1, noise_dim=noise_dim, img_channels=3, img_size=START_RESOLUTION).to(device)
-discriminator = Networks.Discriminator(embedding_dim=category_embedding_dim + title_embedding_dim * TITLE_MAX_LENGTH, img_channels=3, img_size=START_RESOLUTION).to(device)
+discriminator = Networks.Discriminator(embedding_dim=1, img_channels=3, img_size=START_RESOLUTION).to(device)
 
 # Loss and optimizers
 adversarial_loss = nn.BCELoss()
@@ -176,49 +176,59 @@ sample_interval = 100
 def progressive_resize(image:torch.Tensor, target_resolution: tuple[int,int]) -> torch.Tensor:
     return Resize(target_resolution)(image)
 
+new_resolution = START_RESOLUTION
 for epoch in range(n_epochs):
     for i, (imgs, category_tensor, title_indices) in enumerate(dataloader):
         batch_size = imgs.size(0)
-        valid = torch.ones(batch_size, 1, requires_grad=False).to(device)
-        fake = torch.zeros(batch_size, 1, requires_grad=False).to(device)
         real_imgs = imgs.to(device)
         category_tensor = category_tensor.to(device)
-        title_indices = title_indices.to(device)
-
         # Generate embeddings
+        category_title_embedding_net = category_title_embedding_net.to(device)
+        title_indices = title_indices.to(device)
         embeddings = category_title_embedding_net(category_tensor, title_indices).squeeze().to(device)
+        current_batch_size = embeddings.size(0)
+
+        valid = torch.ones(current_batch_size).unsqueeze(1).to(device)
+        fake = torch.zeros(current_batch_size).unsqueeze(1).to(device)
 
         # Train Generator
         optimizer_G.zero_grad()
-        noise = torch.randn(batch_size, noise_dim).to(device)
+        noise = torch.randn(current_batch_size, noise_dim).to(device)
         gen_imgs = generator(embeddings, noise)
+
         g_loss = adversarial_loss(discriminator(embeddings, gen_imgs), valid)
-        g_loss.backward()
+        g_loss.backward(retain_graph=True)
         optimizer_G.step()
 
         # Train Discriminator
         optimizer_D.zero_grad()
-        real_loss = adversarial_loss(discriminator(embeddings, real_imgs), valid)
+        real_loss = adversarial_loss(discriminator(embeddings, real_imgs[:current_batch_size]), valid)
         fake_loss = adversarial_loss(discriminator(embeddings, gen_imgs.detach()), fake)
         d_loss = (real_loss + fake_loss) / 2
         d_loss.backward()
         optimizer_D.step()
 
-        # Print progress
-        print(f"[Epoch {epoch}/{n_epochs}] [Batch {i}/{len(dataloader)}] [D loss: {d_loss.item()}] [G loss: {g_loss.item()}]")
-
         # Save generated samples
-        if epoch % sample_interval == 0:
-            torchvision_save_image(gen_imgs.data[:25], f"images/{epoch}_{i}.png", nrow=5, normalize=True)
+        if i % sample_interval == 0:
+            if not os.path.exists(f"{THUMBNAILS_DIR}/generated"):
+                os.makedirs(f"{THUMBNAILS_DIR}/generated")
+            torchvision_save_image(gen_imgs.data[:25], f"{THUMBNAILS_DIR}/generated/{epoch+1}_{i+1}.png", nrow=5, normalize=True)
+
+    if (epoch + 1) % 1 == 0:
+        print(f"[Epoch {epoch+1}/{n_epochs}] [Batch {i+1}/{len(dataloader)}] [D loss: {d_loss.item():.3f}] [G loss: {g_loss.item():.3f}]")
 
     # Progressive growing step: Increase resolution every few epochs
-    if epoch % (n_epochs // 4) == 0 and epoch != 0:
-        new_resolution = (START_RESOLUTION[0] * 2, START_RESOLUTION[1] * 2)
+    target_reached = False
+    if epoch % (n_epochs // 5) == 0 and epoch != 0 and not target_reached:
+        new_resolution = (new_resolution[0] * 2, new_resolution[1] * 2)
+        if new_resolution == TARGET_RESOLUTION:
+            target_reached = True 
         thumbnail_dataset.resolution = new_resolution
-        for param in resnet.parameters():
-            param.requires_grad = True
-        generator.img_size = new_resolution[0]
-        discriminator.img_size = new_resolution[0]
+
+        # Update generator and discriminator with new resolution
+        generator.update_img_size(new_resolution)
+        discriminator.update_img_size(new_resolution)
+       
 
 
 # Streamlit for visualization
