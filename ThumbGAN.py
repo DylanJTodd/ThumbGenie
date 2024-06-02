@@ -21,8 +21,8 @@ from torchvision.utils import save_image
 THUMBNAILS_DIR = 'thumbnail'
 METADATA_FILE = './thumbnail/metadata.csv'
 BATCH_SIZE = 64
-START_RESOLUTION = (128, 72)
-TARGET_RESOLUTION = (1280, 720)
+START_RESOLUTION = (72, 128)
+TARGET_RESOLUTION = (586, 1024)
 TITLE_MAX_LENGTH = 15
 
 # Device setup
@@ -31,7 +31,7 @@ print(f"Using device: {device}")
 
 # Data Preparation
 class GetImage:
-    def __init__(self, image_id:str, resolution:tuple[int, int], thumbnail_dir:str) -> None:
+    def __init__(self, image_id: str, resolution: tuple[int, int], thumbnail_dir: str) -> None:
         self.image_id = image_id
         self.resolution = resolution
         self.thumbnail_dir = thumbnail_dir
@@ -61,7 +61,7 @@ class GetImage:
         return None
     
 class ThumbnailDataset(Dataset):
-    def __init__(self, metadata_df:pandas.DataFrame , thumbnail_dir:str, resolution:tuple[int,int], glove:GloVe) -> None:
+    def __init__(self, metadata_df: pandas.DataFrame, thumbnail_dir: str, resolution: tuple[int, int], glove: GloVe) -> None:
         self.metadata_df = metadata_df
         self.thumbnail_dir = thumbnail_dir
         self.resolution = resolution
@@ -74,14 +74,14 @@ class ThumbnailDataset(Dataset):
     def __len__(self) -> int:
         return len(self.metadata_df)
 
-    def __getitem__(self, idx:int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         row = self.metadata_df.iloc[idx]
         image_id = row['Id']
         category = row['Category']
         title = row['Title']
 
         # Load and preprocess image
-        image_tensor = self._load_image(image_id) #CAN BE NONE
+        image_tensor = self._load_image(image_id)
         image_tensor = self._normalize(image_tensor)
 
         # Get title embedding
@@ -93,42 +93,42 @@ class ThumbnailDataset(Dataset):
 
         return image_tensor, category_tensor, title_indices
     
-    def _load_image(self, image_id:str) -> torch.Tensor:
+    def _load_image(self, image_id: str) -> torch.Tensor:
         get_image = GetImage(image_id, self.resolution, self.thumbnail_dir)
         return get_image.get()
 
-    def _normalize(self, image:torch.Tensor) -> torch.Tensor:
+    def _normalize(self, image: torch.Tensor) -> torch.Tensor:
         transform = Normalize(mean=self.mean, std=self.std)
         return transform(image)
 
-    def _tokenize_and_embed_title(self, title:str) -> list[int]:
+    def _tokenize_and_embed_title(self, title: str) -> list[int]:
         tokens = title.split()[:self.title_max_length]
         indices = [self.glove.stoi[token] if token in self.glove.stoi else self.glove.stoi['unk'] for token in tokens]
         indices += [0] * (self.title_max_length - len(indices))
         return indices
 
     def calculate_normalization_params(self) -> tuple[torch.Tensor, torch.Tensor]:
-        # Calculate mean and std of pixel values across the dataset
         mean = torch.zeros(3)
         std = torch.zeros(3)
+        valid_images = 0
         for i in range(len(self.metadata_df)):
             image_id = self.metadata_df.iloc[i]['Id']
             image_tensor = self._load_image(image_id)
-            if (image_tensor is not None):
+            if image_tensor is not None:
                 mean += image_tensor.mean(dim=(1, 2))
                 std += image_tensor.std(dim=(1, 2))
-            else:
-                break
-
-            mean /= len(self.metadata_df)
-            std /= len(self.metadata_df)
-            return mean, std
+                valid_images += 1
         
+        if valid_images > 0:
+            mean /= valid_images
+            std /= valid_images
+        
+        return mean, std
+
 metadata_df = pandas.read_csv(METADATA_FILE)
 label_encoder = LabelEncoder()
 metadata_df['Category'] = label_encoder.fit_transform(metadata_df['Category'])
 label_mapping = dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))
-
 
 # Load GloVe embeddings
 glove = GloVe(name='6B', dim=100)
@@ -169,11 +169,10 @@ optimizer_G = optim.Adam(generator.parameters(), lr=0.0002, betas=(0.5, 0.999))
 optimizer_D = optim.Adam(discriminator.parameters(), lr=0.0002, betas=(0.5, 0.999))
 
 # Training loop
-n_epochs = 5   
-sample_interval = 100
+n_epochs = 4 
+sample_interval = 50
 
-
-def progressive_resize(image:torch.Tensor, target_resolution: tuple[int,int]) -> torch.Tensor:
+def progressive_resize(image: torch.Tensor, target_resolution: tuple[int, int]) -> torch.Tensor:
     return Resize(target_resolution)(image)
 
 new_resolution = START_RESOLUTION
@@ -182,13 +181,13 @@ for epoch in range(n_epochs):
         batch_size = imgs.size(0)
         real_imgs = imgs.to(device)
         category_tensor = category_tensor.to(device)
-        # Generate embeddings
-        category_title_embedding_net = category_title_embedding_net.to(device)
         title_indices = title_indices.to(device)
+
+        # Generate embeddings
         embeddings = category_title_embedding_net(category_tensor, title_indices).squeeze().to(device)
 
-        valid = torch.ones(batch_size).unsqueeze(1).to(device)
-        fake = torch.zeros(batch_size).unsqueeze(1).to(device)
+        valid = torch.ones(batch_size, 1).to(device)
+        fake = torch.zeros(batch_size, 1).to(device)
 
         # Train Generator
         optimizer_G.zero_grad()
@@ -201,7 +200,7 @@ for epoch in range(n_epochs):
 
         # Train Discriminator
         optimizer_D.zero_grad()
-        real_loss = adversarial_loss(discriminator(embeddings, real_imgs[:batch_size]), valid)
+        real_loss = adversarial_loss(discriminator(embeddings, real_imgs), valid)
         fake_loss = adversarial_loss(discriminator(embeddings, gen_imgs.detach()), fake)
         d_loss = (real_loss + fake_loss) / 2
         d_loss.backward()
@@ -213,12 +212,11 @@ for epoch in range(n_epochs):
                 os.makedirs(f"{THUMBNAILS_DIR}/generated")
             torchvision_save_image(gen_imgs.data[:25], f"{THUMBNAILS_DIR}/generated/{epoch+1}_{i+1}.png", nrow=5, normalize=True)
 
-    if (epoch + 1) % 1 == 0:
-        print(f"[Epoch {epoch+1}/{n_epochs}] [Batch {i+1}/{len(dataloader)}] [D loss: {d_loss.item():.3f}] [G loss: {g_loss.item():.3f}]")
+    print(f"[Epoch {epoch+1}/{n_epochs}] [Batch {i+1}/{len(dataloader)}] [D loss: {d_loss.item():.3f}] [G loss: {g_loss.item():.3f}]")
 
-    # Progressive growing step: Increase resolution every few epochs
+# Progressive growing step: Increase resolution every few epochs
     target_reached = False
-    if epoch % (n_epochs // 5) == 0 and epoch != 0 and not target_reached:
+    if epoch % (n_epochs // 4) == 0 and epoch != 0 and not target_reached:
         new_resolution = (new_resolution[0] * 2, new_resolution[1] * 2)
         if new_resolution == TARGET_RESOLUTION:
             target_reached = True 
@@ -229,8 +227,6 @@ for epoch in range(n_epochs):
         discriminator.update_img_size(new_resolution)
         if (dataloader.batch_size > 1):
             dataloader = DataLoader(thumbnail_dataset, batch_size=dataloader.batch_size // 4, shuffle=True)
-       
-
 
 # Streamlit for visualization
 st.title("Generated Thumbnails")
