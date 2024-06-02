@@ -186,14 +186,13 @@ for epoch in range(n_epochs):
         category_title_embedding_net = category_title_embedding_net.to(device)
         title_indices = title_indices.to(device)
         embeddings = category_title_embedding_net(category_tensor, title_indices).squeeze().to(device)
-        current_batch_size = embeddings.size(0)
 
-        valid = torch.ones(current_batch_size).unsqueeze(1).to(device)
-        fake = torch.zeros(current_batch_size).unsqueeze(1).to(device)
+        valid = torch.ones(batch_size).unsqueeze(1).to(device)
+        fake = torch.zeros(batch_size).unsqueeze(1).to(device)
 
         # Train Generator
         optimizer_G.zero_grad()
-        noise = torch.randn(current_batch_size, noise_dim).to(device)
+        noise = torch.randn(batch_size, noise_dim).to(device)
         gen_imgs = generator(embeddings, noise)
 
         g_loss = adversarial_loss(discriminator(embeddings, gen_imgs), valid)
@@ -202,7 +201,7 @@ for epoch in range(n_epochs):
 
         # Train Discriminator
         optimizer_D.zero_grad()
-        real_loss = adversarial_loss(discriminator(embeddings, real_imgs[:current_batch_size]), valid)
+        real_loss = adversarial_loss(discriminator(embeddings, real_imgs[:batch_size]), valid)
         fake_loss = adversarial_loss(discriminator(embeddings, gen_imgs.detach()), fake)
         d_loss = (real_loss + fake_loss) / 2
         d_loss.backward()
@@ -228,6 +227,8 @@ for epoch in range(n_epochs):
         # Update generator and discriminator with new resolution
         generator.update_img_size(new_resolution)
         discriminator.update_img_size(new_resolution)
+        if (dataloader.batch_size > 1):
+            dataloader = DataLoader(thumbnail_dataset, batch_size=dataloader.batch_size // 4, shuffle=True)
        
 
 

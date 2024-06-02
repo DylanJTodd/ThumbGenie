@@ -75,7 +75,11 @@ class Generator(nn.Module):
         self.fc4 = nn.Linear(512, self.img_channels * self.img_size[0] * self.img_size[1]).to(self.fc4.weight.device)
 
     def forward(self, embedding, noise):
-        embedding.unsqueeze_(1)
+        if embedding.dim() != 0:
+            embedding.unsqueeze_(1)
+        else:
+            embedding.unsqueeze_(0)
+            embedding.unsqueeze_(1)
         x = torch.cat((embedding, noise), dim=1)
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
