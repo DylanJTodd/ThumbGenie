@@ -22,7 +22,7 @@ THUMBNAILS_DIR = 'thumbnail'
 METADATA_FILE = './thumbnail/metadata.csv'
 BATCH_SIZE = 64
 START_RESOLUTION = (72, 128)
-TARGET_RESOLUTION = (586, 1024)
+TARGET_RESOLUTION = (432, 768)
 TITLE_MAX_LENGTH = 15
 
 # Device setup
@@ -165,29 +165,82 @@ discriminator = Networks.Discriminator(embedding_dim=1, img_channels=3, img_size
 
 # Loss and optimizers
 adversarial_loss = nn.BCELoss()
-optimizer_G = optim.Adam(generator.parameters(), lr=0.0002, betas=(0.5, 0.999))
-optimizer_D = optim.Adam(discriminator.parameters(), lr=0.0002, betas=(0.5, 0.999))
+optimizer_G = optim.Adam(generator.parameters(), lr=0.005, betas=(0.5, 0.999))
+optimizer_D = optim.Adam(discriminator.parameters(), lr=0.001, betas=(0.5, 0.999))
 
 # Training loop
-n_epochs = 4 
-sample_interval = 50
+n_epochs = 3000
+sample_interval = 100
 
-def progressive_resize(image: torch.Tensor, target_resolution: tuple[int, int]) -> torch.Tensor:
-    return Resize(target_resolution)(image)
+def weights_init_normal(m):
+    classname = m.__class__.__name__
+    if classname.find('Conv') != -1:
+        nn.init.normal_(m.weight.data, 0.0, 0.02)
+    elif classname.find('BatchNorm') != -1:
+        nn.init.normal_(m.weight.data, 1.0, 0.02)
+        nn.init.constant_(m.bias.data, 0)
+
+generator.apply(weights_init_normal)
+discriminator.apply(weights_init_normal)
+
+def dynamic_label_smoothing(epoch, n_epochs, initial_smoothing=0.1, final_smoothing=0.9):
+    return initial_smoothing + (final_smoothing - initial_smoothing) * (epoch / n_epochs)
+
+def save_checkpoint(epoch, model, optimizer, loss, resolution, filename):
+    checkpoint = {
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'loss': loss,
+        'resolution': resolution,
+    }
+    torch.save(checkpoint, filename)
+
+def load_checkpoint(filename, model, optimizer):
+    checkpoint = torch.load(filename)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    epoch = checkpoint['epoch']
+    loss = checkpoint['loss']
+    resolution = checkpoint['resolution']
+    return epoch, loss, resolution
+
+
+G_losses = []
+D_losses = []
 
 new_resolution = START_RESOLUTION
-for epoch in range(n_epochs):
+
+CHECKPOINT_PHASE = 0  # 0 for no checkpoint, 1 for 1/3, 2 for 2/3, 3 for 3/3
+
+# Load checkpoint if specified
+if CHECKPOINT_PHASE > 0:
+    checkpoint_generator = f"checkpoint_generator_epoch_{(CHECKPOINT_PHASE * n_epochs // 3)}.pth"
+    checkpoint_discriminator = f"checkpoint_discriminator_epoch_{(CHECKPOINT_PHASE * n_epochs // 3)}.pth"
+    
+    start_epoch, _, new_resolution = load_checkpoint(checkpoint_generator, generator, optimizer_G)
+    _, _, _ = load_checkpoint(checkpoint_discriminator, discriminator, optimizer_D)
+    
+    # Update dataset and models with the checkpoint resolution
+    thumbnail_dataset.resolution = new_resolution
+    generator.update_img_size(new_resolution)
+    discriminator.update_img_size(new_resolution)
+else:
+    start_epoch = 0
+
+for epoch in range(start_epoch, n_epochs):
+    smoothing_factor = dynamic_label_smoothing(epoch, n_epochs)
     for i, (imgs, category_tensor, title_indices) in enumerate(dataloader):
         batch_size = imgs.size(0)
         real_imgs = imgs.to(device)
         category_tensor = category_tensor.to(device)
         title_indices = title_indices.to(device)
 
+        valid = smoothing_factor * torch.ones(batch_size, 1).to(device)
+        fake = torch.zeros(batch_size, 1).to(device)
+
         # Generate embeddings
         embeddings = category_title_embedding_net(category_tensor, title_indices).squeeze().to(device)
-
-        valid = torch.ones(batch_size, 1).to(device)
-        fake = torch.zeros(batch_size, 1).to(device)
 
         # Train Generator
         optimizer_G.zero_grad()
@@ -206,6 +259,9 @@ for epoch in range(n_epochs):
         d_loss.backward()
         optimizer_D.step()
 
+        G_losses.append(g_loss.item())
+        D_losses.append(d_loss.item())
+
         # Save generated samples
         if i % sample_interval == 0:
             if not os.path.exists(f"{THUMBNAILS_DIR}/generated"):
@@ -214,19 +270,33 @@ for epoch in range(n_epochs):
 
     print(f"[Epoch {epoch+1}/{n_epochs}] [Batch {i+1}/{len(dataloader)}] [D loss: {d_loss.item():.3f}] [G loss: {g_loss.item():.3f}]")
 
-# Progressive growing step: Increase resolution every few epochs
+# Progressive growing
     target_reached = False
-    if epoch % (n_epochs // 4) == 0 and epoch != 0 and not target_reached:
+    if epoch != 0 and epoch % (n_epochs // 3) == 0 and not target_reached:
+
+        save_checkpoint(epoch, generator, optimizer_G, g_loss.item(), new_resolution, f"./checkpoints/checkpoint_generator_epoch_{epoch}.pth")
+        save_checkpoint(epoch, discriminator, optimizer_D, d_loss.item(), new_resolution, f"./checkpoints/checkpoint_discriminator_epoch_{epoch}.pth")
+
         new_resolution = (new_resolution[0] * 2, new_resolution[1] * 2)
         if new_resolution == TARGET_RESOLUTION:
             target_reached = True 
         thumbnail_dataset.resolution = new_resolution
 
-        # Update generator and discriminator with new resolution
+        # Update GAN
         generator.update_img_size(new_resolution)
         discriminator.update_img_size(new_resolution)
         if (dataloader.batch_size > 1):
-            dataloader = DataLoader(thumbnail_dataset, batch_size=dataloader.batch_size // 4, shuffle=True)
+            dataloader = DataLoader(thumbnail_dataset, batch_size=dataloader.batch_size // 8, shuffle=True)
+        else: 
+            dataloader = DataLoader(thumbnail_dataset, batch_size=1, shuffle=True)
+
+plt.figure()
+plt.plot(G_losses, label='Generator Loss')
+plt.plot(D_losses, label='Discriminator Loss')
+plt.xlabel('Iteration')
+plt.ylabel('Loss')
+plt.legend()
+plt.show()
 
 # Streamlit for visualization
 st.title("Generated Thumbnails")
