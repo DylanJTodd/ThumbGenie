@@ -69,7 +69,7 @@ class Generator(nn.Module):
         self.fc1 = nn.Linear(embedding_dim + noise_dim, 4*4*512)
         self.bn1 = nn.BatchNorm1d(4*4*512)
         self.conv2 = nn.ConvTranspose2d(512, 256, kernel_size=4, stride=1, padding=0)
-        self.bn2 = nn.BatchNorm2d(256)
+        self.bn2 = nn.BatchNorm2d(256)      
         self.conv3 = nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1)
         self.bn3 = nn.BatchNorm2d(128)
         self.conv4 = nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1)

@@ -220,7 +220,6 @@ if CHECKPOINT_PHASE > 0:
     
     start_epoch, _, new_resolution = load_checkpoint(checkpoint_generator, generator, optimizer_G)
     _, _, _ = load_checkpoint(checkpoint_discriminator, discriminator, optimizer_D)
-    # Update dataset and models with the checkpoint resolution
     thumbnail_dataset.resolution = new_resolution
     generator.update_img_size(new_resolution)
     discriminator.update_img_size(new_resolution)
@@ -238,39 +237,47 @@ for epoch in range(start_epoch, n_epochs):
         valid = smoothing_factor * torch.ones(batch_size, 1).to(device)
         fake = torch.zeros(batch_size, 1).to(device)
 
-        # Generate embeddings
-        embeddings = category_title_embedding_net(category_tensor, title_indices).squeeze().to(device)
-
-        # Train Generator (first update)
-        optimizer_G.zero_grad()
-        noise = torch.randn(batch_size, noise_dim).to(device)
-        gen_imgs = generator(embeddings, noise)
-
-        g_loss = adversarial_loss(discriminator(embeddings, gen_imgs), valid)
-        g_loss.backward(retain_graph=True)
-        optimizer_G.step()
-
-        #Train Generator (second update)
-        optimizer_G.zero_grad()
-        noise = torch.randn(batch_size, noise_dim).to(device)
-        gen_imgs = generator(embeddings, noise)
-
-        g_loss = adversarial_loss(discriminator(embeddings, gen_imgs), valid)
-        g_loss.backward(retain_graph=True)
-        optimizer_G.step()
-
         # Train Discriminator
         optimizer_D.zero_grad()
-        real_loss = adversarial_loss(discriminator(embeddings, real_imgs), valid)
-        fake_loss = adversarial_loss(discriminator(embeddings, gen_imgs.detach()), fake)
+
+        # Generate embeddings for real images
+        embeddings_real = category_title_embedding_net(category_tensor, title_indices).squeeze().to(device)
+
+        # Forward pass real images
+        real_validity = discriminator(embeddings_real, real_imgs)
+        real_loss = adversarial_loss(real_validity, valid)
+
+        # Generate fake images
+        noise = torch.randn(batch_size, noise_dim).to(device)
+        embeddings_fake = category_title_embedding_net(category_tensor, title_indices).squeeze().to(device)
+        gen_imgs = generator(embeddings_fake, noise)
+
+        # Forward pass fake images
+        fake_validity = discriminator(embeddings_fake, gen_imgs.detach())
+        fake_loss = adversarial_loss(fake_validity, fake)
+
+        # Compute discriminator loss
         d_loss = (real_loss + fake_loss) / 2
         d_loss.backward()
         optimizer_D.step()
 
+        # Train Generator
+        optimizer_G.zero_grad()
+
+        # Generate fake images again for generator training
+        noise = torch.randn(batch_size, noise_dim).to(device)
+        embeddings_fake = category_title_embedding_net(category_tensor, title_indices).squeeze().to(device)
+        gen_imgs = generator(embeddings_fake, noise)
+        fake_validity = discriminator(embeddings_fake, gen_imgs)
+
+        # Compute generator loss
+        g_loss = adversarial_loss(fake_validity, valid)
+        g_loss.backward()
+        optimizer_G.step()
+
         G_losses.append(g_loss.item())
         D_losses.append(d_loss.item())
 
-        # Save generated samples
         if i % sample_interval == 0:
             if not os.path.exists(f"{THUMBNAILS_DIR}/generated"):
                 os.makedirs(f"{THUMBNAILS_DIR}/generated")
@@ -278,26 +285,19 @@ for epoch in range(start_epoch, n_epochs):
 
     print(f"[Epoch {epoch+1}/{n_epochs}] [Batch {i+1}/{len(dataloader)}] [D loss: {d_loss.item():.3f}] [G loss: {g_loss.item():.3f}]")
 
-# Progressive growing
-    target_reached = False
-    if epoch != 0 and epoch % (n_epochs // 3) == 0 and not target_reached:
-
+    # Progressive growing
+    if epoch != 0 and epoch % (n_epochs // 3) == 0 and new_resolution != TARGET_RESOLUTION:
         save_checkpoint(epoch, generator, optimizer_G, g_loss.item(), new_resolution, f"./checkpoints/checkpoint_generator_epoch_{epoch}.pth")
         save_checkpoint(epoch, discriminator, optimizer_D, d_loss.item(), new_resolution, f"./checkpoints/checkpoint_discriminator_epoch_{epoch}.pth")
 
         new_resolution = (new_resolution[0] * 2, new_resolution[1] * 2)
-        if new_resolution == TARGET_RESOLUTION:
-            target_reached = True 
         thumbnail_dataset.resolution = new_resolution
-
-        # Update GAN
         generator.update_img_size(new_resolution)
         discriminator.update_img_size(new_resolution)
-        if (dataloader.batch_size > 1):
-            dataloader = DataLoader(thumbnail_dataset, batch_size=dataloader.batch_size // 8, shuffle=True)
-        else: 
-            dataloader = DataLoader(thumbnail_dataset, batch_size=1, shuffle=True)
 
+        dataloader = DataLoader(thumbnail_dataset, batch_size=max(dataloader.batch_size // 8, 1), shuffle=True)
+
+# Plot losses
 plt.figure()
 plt.plot(G_losses, label='Generator Loss')
 plt.plot(D_losses, label='Discriminator Loss')
