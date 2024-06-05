@@ -165,8 +165,8 @@ discriminator = Networks.Discriminator(embedding_dim=1, img_channels=3, img_size
 
 # Loss and optimizers
 adversarial_loss = nn.BCELoss()
-optimizer_G = optim.Adam(generator.parameters(), lr=0.005, betas=(0.5, 0.999))
-optimizer_D = optim.Adam(discriminator.parameters(), lr=0.001, betas=(0.5, 0.999))
+optimizer_G = optim.Adam(generator.parameters(), lr=0.001, betas=(0.5, 0.999))
+optimizer_D = optim.Adam(discriminator.parameters(), lr=0.0001, betas=(0.5, 0.999))
 
 # Training loop
 n_epochs = 3000
@@ -220,7 +220,6 @@ if CHECKPOINT_PHASE > 0:
     
     start_epoch, _, new_resolution = load_checkpoint(checkpoint_generator, generator, optimizer_G)
     _, _, _ = load_checkpoint(checkpoint_discriminator, discriminator, optimizer_D)
-    
     # Update dataset and models with the checkpoint resolution
     thumbnail_dataset.resolution = new_resolution
     generator.update_img_size(new_resolution)
@@ -242,7 +241,16 @@ for epoch in range(start_epoch, n_epochs):
         # Generate embeddings
         embeddings = category_title_embedding_net(category_tensor, title_indices).squeeze().to(device)
 
-        # Train Generator
+        # Train Generator (first update)
+        optimizer_G.zero_grad()
+        noise = torch.randn(batch_size, noise_dim).to(device)
+        gen_imgs = generator(embeddings, noise)
+
+        g_loss = adversarial_loss(discriminator(embeddings, gen_imgs), valid)
+        g_loss.backward(retain_graph=True)
+        optimizer_G.step()
+
+        #Train Generator (second update)
         optimizer_G.zero_grad()
         noise = torch.randn(batch_size, noise_dim).to(device)
         gen_imgs = generator(embeddings, noise)
