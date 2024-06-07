@@ -17,19 +17,24 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import LabelEncoder
 from torchvision.utils import save_image
 
-# Constants
+# Constants and hyperparameters
 THUMBNAILS_DIR = 'thumbnail'
 METADATA_FILE = './thumbnail/metadata.csv'
 BATCH_SIZE = 64
 START_RESOLUTION = (72, 128)
 TARGET_RESOLUTION = (432, 768)
 TITLE_MAX_LENGTH = 15
+NUMBER_EPOCHS = 3000
+SAMPLE_INTERVAL = 100 # Interval to save generated images
+GENERATOR_LEARNING_RATE = 0.001
+DISCRIMINATOR_LEARNING_RATE = 0.0001
+CHECKPOINT_PHASE = 0  # 0 for no checkpoint, 1 for 1/3, 2 for 2/3, 3 for 3/3
 
 # Device setup
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
-# Data Preparation
+# Data preparation classes !!on review!!
 class GetImage:
     def __init__(self, image_id: str, resolution: tuple[int, int], thumbnail_dir: str) -> None:
         self.image_id = image_id
@@ -125,53 +130,6 @@ class ThumbnailDataset(Dataset):
         
         return mean, std
 
-metadata_df = pandas.read_csv(METADATA_FILE)
-label_encoder = LabelEncoder()
-metadata_df['Category'] = label_encoder.fit_transform(metadata_df['Category'])
-label_mapping = dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))
-
-# Load GloVe embeddings
-glove = GloVe(name='6B', dim=100)
-vocab_size = len(glove.itos)
-embedding_dim = glove.dim
-
-# Pretrained ResNet model for feature extraction
-resnet = resnet50(weights=ResNet50_Weights.DEFAULT)
-resnet = torch.nn.Sequential(*list(resnet.children())[:-1])
-for param in resnet.parameters():
-    param.requires_grad = False
-
-# Instantiate the dataset and dataloader
-thumbnail_dataset = ThumbnailDataset(metadata_df, THUMBNAILS_DIR, START_RESOLUTION, glove)
-dataloader = DataLoader(thumbnail_dataset, batch_size=BATCH_SIZE, shuffle=True)
-
-# Instantiate the embedding network
-num_categories = len(metadata_df['Category'].unique())
-category_embedding_dim = 50
-title_embedding_dim = 100
-
-category_title_embedding_net = Networks.CategoryTitleEmbeddingNet(
-    num_categories=num_categories,
-    category_embedding_dim=category_embedding_dim,
-    vocab_size=vocab_size,
-    title_embedding_dim=title_embedding_dim,
-    title_max_length=TITLE_MAX_LENGTH
-).to(device)
-
-# Instantiate the GAN models
-noise_dim = 100
-generator = Networks.Generator(embedding_dim=1, noise_dim=noise_dim, img_channels=3, img_size=START_RESOLUTION).to(device)
-discriminator = Networks.Discriminator(embedding_dim=1, img_channels=3, img_size=START_RESOLUTION).to(device)
-
-# Loss and optimizers
-adversarial_loss = nn.BCELoss()
-optimizer_G = optim.Adam(generator.parameters(), lr=0.001, betas=(0.5, 0.999))
-optimizer_D = optim.Adam(discriminator.parameters(), lr=0.0001, betas=(0.5, 0.999))
-
-# Training loop
-n_epochs = 3000
-sample_interval = 100
-
 def weights_init_normal(m):
     classname = m.__class__.__name__
     if classname.find('Conv') != -1:
@@ -180,9 +138,7 @@ def weights_init_normal(m):
         nn.init.normal_(m.weight.data, 1.0, 0.02)
         nn.init.constant_(m.bias.data, 0)
 
-generator.apply(weights_init_normal)
-discriminator.apply(weights_init_normal)
-
+#Dynamic label smoothing for reducing discriminator overconfidence
 def dynamic_label_smoothing(epoch, n_epochs, initial_smoothing=0.1, final_smoothing=0.9):
     return initial_smoothing + (final_smoothing - initial_smoothing) * (epoch / n_epochs)
 
@@ -205,19 +161,69 @@ def load_checkpoint(filename, model, optimizer):
     resolution = checkpoint['resolution']
     return epoch, loss, resolution
 
+#File preparation
+metadata_df = pandas.read_csv(METADATA_FILE)
 
+#Representing the categories as unique integers
+label_encoder = LabelEncoder()
+metadata_df['Category'] = label_encoder.fit_transform(metadata_df['Category'])
+label_mapping = dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))
+
+# Loading GloVe embeddings for title embedding 
+glove = GloVe(name='6B', dim=100)
+vocab_size = len(glove.itos)
+embedding_dim = glove.dim
+
+# Pretrained ResNet model for generator feature extraction
+resnet = resnet50(weights=ResNet50_Weights.DEFAULT)
+resnet = torch.nn.Sequential(*list(resnet.children())[:-1])
+for param in resnet.parameters():
+    param.requires_grad = False
+
+# Instantiate the dataset and dataloader
+thumbnail_dataset = ThumbnailDataset(metadata_df, THUMBNAILS_DIR, START_RESOLUTION, glove)
+dataloader = DataLoader(thumbnail_dataset, batch_size=BATCH_SIZE, shuffle=True)
+
+# Instantiate the embedding network
+num_categories = len(metadata_df['Category'].unique())
+category_embedding_dim = 50
+title_embedding_dim = 100
+
+category_title_embedding_net = Networks.CategoryTitleEmbeddingNet(
+    num_categories=num_categories,
+    category_embedding_dim=category_embedding_dim,
+    vocab_size=vocab_size,
+    title_embedding_dim=title_embedding_dim,
+    title_max_length=TITLE_MAX_LENGTH
+).to(device)
+
+
+# Instantiate the GAN models
+noise_dim = 100 #not sure about this purpose 
+generator = Networks.Generator(embedding_dim=1, noise_dim=noise_dim, img_channels=3, img_size=START_RESOLUTION).to(device)
+discriminator = Networks.Discriminator(embedding_dim=1, img_channels=3, img_size=START_RESOLUTION).to(device)
+
+generator.apply(weights_init_normal)
+discriminator.apply(weights_init_normal)
+
+# Loss and optimizers
+adversarial_loss = nn.BCELoss()
+optimizer_G = optim.Adam(generator.parameters(), lr=GENERATOR_LEARNING_RATE, betas=(0.5, 0.999))
+optimizer_D = optim.Adam(discriminator.parameters(), lr=DISCRIMINATOR_LEARNING_RATE, betas=(0.5, 0.999))
+
+# Training loop
 G_losses = []
 D_losses = []
 
 new_resolution = START_RESOLUTION
 
-CHECKPOINT_PHASE = 0  # 0 for no checkpoint, 1 for 1/3, 2 for 2/3, 3 for 3/3
-
 # Load checkpoint if specified
 if CHECKPOINT_PHASE > 0:
-    checkpoint_generator = f"checkpoint_generator_epoch_{(CHECKPOINT_PHASE * n_epochs // 3)}.pth"
-    checkpoint_discriminator = f"checkpoint_discriminator_epoch_{(CHECKPOINT_PHASE * n_epochs // 3)}.pth"
+    #open checkpoint file
+    checkpoint_generator = f"checkpoint_generator_epoch_{(CHECKPOINT_PHASE * NUMBER_EPOCHS // 3)}.pth"
+    checkpoint_discriminator = f"checkpoint_discriminator_epoch_{(CHECKPOINT_PHASE * NUMBER_EPOCHS // 3)}.pth"
     
+    #Load checkpoint
     start_epoch, _, new_resolution = load_checkpoint(checkpoint_generator, generator, optimizer_G)
     _, _, _ = load_checkpoint(checkpoint_discriminator, discriminator, optimizer_D)
     thumbnail_dataset.resolution = new_resolution
@@ -226,8 +232,8 @@ if CHECKPOINT_PHASE > 0:
 else:
     start_epoch = 0
 
-for epoch in range(start_epoch, n_epochs):
-    smoothing_factor = dynamic_label_smoothing(epoch, n_epochs)
+for epoch in range(start_epoch, NUMBER_EPOCHS):
+    smoothing_factor = dynamic_label_smoothing(epoch, NUMBER_EPOCHS)
     for i, (imgs, category_tensor, title_indices) in enumerate(dataloader):
         batch_size = imgs.size(0)
         real_imgs = imgs.to(device)
@@ -278,15 +284,15 @@ for epoch in range(start_epoch, n_epochs):
         G_losses.append(g_loss.item())
         D_losses.append(d_loss.item())
 
-        if i % sample_interval == 0:
+        if i % SAMPLE_INTERVAL == 0:
             if not os.path.exists(f"{THUMBNAILS_DIR}/generated"):
                 os.makedirs(f"{THUMBNAILS_DIR}/generated")
             torchvision_save_image(gen_imgs.data[:25], f"{THUMBNAILS_DIR}/generated/{epoch+1}_{i+1}.png", nrow=5, normalize=True)
 
-    print(f"[Epoch {epoch+1}/{n_epochs}] [Batch {i+1}/{len(dataloader)}] [D loss: {d_loss.item():.3f}] [G loss: {g_loss.item():.3f}]")
+    print(f"[Epoch {epoch+1}/{NUMBER_EPOCHS}] [Batch {i+1}/{len(dataloader)}] [D loss: {d_loss.item():.3f}] [G loss: {g_loss.item():.3f}]")
 
     # Progressive growing
-    if epoch != 0 and epoch % (n_epochs // 3) == 0 and new_resolution != TARGET_RESOLUTION:
+    if epoch != 0 and epoch % (NUMBER_EPOCHS // 3) == 0 and new_resolution != TARGET_RESOLUTION:
         save_checkpoint(epoch, generator, optimizer_G, g_loss.item(), new_resolution, f"./checkpoints/checkpoint_generator_epoch_{epoch}.pth")
         save_checkpoint(epoch, discriminator, optimizer_D, d_loss.item(), new_resolution, f"./checkpoints/checkpoint_discriminator_epoch_{epoch}.pth")
 
@@ -305,20 +311,3 @@ plt.xlabel('Iteration')
 plt.ylabel('Loss')
 plt.legend()
 plt.show()
-
-# Streamlit for visualization
-st.title("Generated Thumbnails")
-st.write("Select a category and enter a title to generate a thumbnail:")
-
-category = st.selectbox("Category", options=range(num_categories))
-title = st.text_input("Title")
-generate_button = st.button("Generate Thumbnail")
-
-if generate_button:
-    title_indices = torch.tensor(thumbnail_dataset._tokenize_and_embed_title(title), dtype=torch.long).unsqueeze(0).to(device)
-    category_tensor = torch.tensor([category], dtype=torch.long).to(device)
-    embeddings = category_title_embedding_net(category_tensor, title_indices).squeeze().to(device)
-    noise = torch.randn(1, noise_dim).to(device)
-    with torch.no_grad():
-        gen_img = generator(embeddings, noise).cpu()
-    st.image(gen_img.squeeze().permute(1, 2, 0).numpy(), clamp=True)
