@@ -3,11 +3,10 @@ import cv2
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torchtext
-torchtext.disable_torchtext_deprecation_warning()
+import torchtext; torchtext.disable_torchtext_deprecation_warning()
 from torchtext.vocab import GloVe
 from torchvision.models import resnet50, ResNet50_Weights
-from torchvision.utils import save_image as torchvision_save_image
+from torchvision.utils import save_image, make_grid
 from torchvision.transforms import ToTensor, Normalize, Resize
 from torch.utils.data import Dataset, DataLoader
 import pandas
@@ -15,7 +14,6 @@ import Networks
 import streamlit as st
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import LabelEncoder
-from torchvision.utils import save_image
 
 # Constants and hyperparameters
 THUMBNAILS_DIR = 'thumbnail'
@@ -34,7 +32,7 @@ CHECKPOINT_PHASE = 0  # 0 for no checkpoint, 1 for 1/3, 2 for 2/3, 3 for 3/3
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
-# Data preparation classes !!on review!!
+# Fetch image from the thumbnail directory !!on review!!
 class GetImage:
     def __init__(self, image_id: str, resolution: tuple[int, int], thumbnail_dir: str) -> None:
         self.image_id = image_id
@@ -53,7 +51,6 @@ class GetImage:
             print(f"Failed to read image at {image_path}.")
             return None
         
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         image = cv2.resize(image, self.resolution)
         tensor = ToTensor()(image)
         return tensor
@@ -64,7 +61,8 @@ class GetImage:
             if os.path.exists(image_path):
                 return image_path
         return None
-    
+       
+#Dataset preparation class !!on review!!
 class ThumbnailDataset(Dataset):
     def __init__(self, metadata_df: pandas.DataFrame, thumbnail_dir: str, resolution: tuple[int, int], glove: GloVe) -> None:
         self.metadata_df = metadata_df
@@ -130,7 +128,8 @@ class ThumbnailDataset(Dataset):
         
         return mean, std
 
-def weights_init_normal(m):
+# Weight initialization for generator and discriminator
+def weights_init_normal(m: nn.Module) -> None:
     classname = m.__class__.__name__
     if classname.find('Conv') != -1:
         nn.init.normal_(m.weight.data, 0.0, 0.02)
@@ -139,10 +138,11 @@ def weights_init_normal(m):
         nn.init.constant_(m.bias.data, 0)
 
 #Dynamic label smoothing for reducing discriminator overconfidence
-def dynamic_label_smoothing(epoch, n_epochs, initial_smoothing=0.1, final_smoothing=0.9):
+def dynamic_label_smoothing(epoch: int, n_epochs: int, initial_smoothing: float=0.1, final_smoothing: float=0.9) -> float:
     return initial_smoothing + (final_smoothing - initial_smoothing) * (epoch / n_epochs)
 
-def save_checkpoint(epoch, model, optimizer, loss, resolution, filename):
+#Saves and loads epoch, model, optimizer, loss, and resolution checkpoint
+def save_checkpoint(epoch: int, model: nn.Module, optimizer: torch.optim.Optimizer , loss: float, resolution: tuple[int,int], filename: str) -> None:
     checkpoint = {
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
@@ -152,7 +152,7 @@ def save_checkpoint(epoch, model, optimizer, loss, resolution, filename):
     }
     torch.save(checkpoint, filename)
 
-def load_checkpoint(filename, model, optimizer):
+def load_checkpoint(filename: str, model: nn.Module, optimizer: torch.optim.Optimizer) -> tuple[int, float, tuple[int,int]]:
     checkpoint = torch.load(filename)
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -160,6 +160,27 @@ def load_checkpoint(filename, model, optimizer):
     loss = checkpoint['loss']
     resolution = checkpoint['resolution']
     return epoch, loss, resolution
+
+def reverse_normalize(tensor, mean, std):
+    mean = mean.clone().detach().to(device)
+    std = std.clone().detach().to(device)
+
+    tensor = tensor * std[:, None, None] + mean[:, None, None]
+    return tensor
+
+def save_generated_images(images, mean, std, epoch, batch, save_dir, nrow=5):
+    images = reverse_normalize(images, mean, std)
+    image_grid = make_grid(images, nrow=nrow, normalize=False)
+
+    # Create the save directory if it doesn't exist
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    
+    # Save the image grid
+    save_path = os.path.join(save_dir, f"{epoch+1}_{batch+1}.png")
+    save_image(image_grid, save_path)
+
+
 
 #File preparation
 metadata_df = pandas.read_csv(METADATA_FILE)
@@ -183,6 +204,9 @@ for param in resnet.parameters():
 # Instantiate the dataset and dataloader
 thumbnail_dataset = ThumbnailDataset(metadata_df, THUMBNAILS_DIR, START_RESOLUTION, glove)
 dataloader = DataLoader(thumbnail_dataset, batch_size=BATCH_SIZE, shuffle=True)
+
+print(thumbnail_dataset[1])
+
 
 # Instantiate the embedding network
 num_categories = len(metadata_df['Category'].unique())
@@ -232,18 +256,22 @@ if CHECKPOINT_PHASE > 0:
 else:
     start_epoch = 0
 
+
+# Training loop
 for epoch in range(start_epoch, NUMBER_EPOCHS):
     smoothing_factor = dynamic_label_smoothing(epoch, NUMBER_EPOCHS)
     for i, (imgs, category_tensor, title_indices) in enumerate(dataloader):
+        # Prepare batch
         batch_size = imgs.size(0)
         real_imgs = imgs.to(device)
         category_tensor = category_tensor.to(device)
         title_indices = title_indices.to(device)
 
+        # Prepare labels
         valid = smoothing_factor * torch.ones(batch_size, 1).to(device)
         fake = torch.zeros(batch_size, 1).to(device)
 
-        # Train Discriminator
+        # Reset gradients
         optimizer_D.zero_grad()
 
         # Generate embeddings for real images
@@ -253,7 +281,7 @@ for epoch in range(start_epoch, NUMBER_EPOCHS):
         real_validity = discriminator(embeddings_real, real_imgs)
         real_loss = adversarial_loss(real_validity, valid)
 
-        # Generate fake images
+        # Generate fake images for discriminator 
         noise = torch.randn(batch_size, noise_dim).to(device)
         embeddings_fake = category_title_embedding_net(category_tensor, title_indices).squeeze().to(device)
         gen_imgs = generator(embeddings_fake, noise)
@@ -262,12 +290,12 @@ for epoch in range(start_epoch, NUMBER_EPOCHS):
         fake_validity = discriminator(embeddings_fake, gen_imgs.detach())
         fake_loss = adversarial_loss(fake_validity, fake)
 
-        # Compute discriminator loss
+        # Compute total discriminator loss and train discriminator
         d_loss = (real_loss + fake_loss) / 2
         d_loss.backward()
         optimizer_D.step()
 
-        # Train Generator
+        # Reset Generator gradients
         optimizer_G.zero_grad()
 
         # Generate fake images again for generator training
@@ -276,33 +304,37 @@ for epoch in range(start_epoch, NUMBER_EPOCHS):
         gen_imgs = generator(embeddings_fake, noise)
         fake_validity = discriminator(embeddings_fake, gen_imgs)
 
-        # Compute generator loss
+        # Compute generator loss and train generator
         g_loss = adversarial_loss(fake_validity, valid)
         g_loss.backward()
         optimizer_G.step()
 
+        # Save losses for evaluation    
         G_losses.append(g_loss.item())
         D_losses.append(d_loss.item())
 
+        # Periodically save generated images
         if i % SAMPLE_INTERVAL == 0:
-            if not os.path.exists(f"{THUMBNAILS_DIR}/generated"):
-                os.makedirs(f"{THUMBNAILS_DIR}/generated")
-            torchvision_save_image(gen_imgs.data[:25], f"{THUMBNAILS_DIR}/generated/{epoch+1}_{i+1}.png", nrow=5, normalize=True)
+            save_generated_images(gen_imgs.data[:25], thumbnail_dataset.mean, thumbnail_dataset.std, epoch, i, f"{THUMBNAILS_DIR}/generated", nrow=5)
 
     print(f"[Epoch {epoch+1}/{NUMBER_EPOCHS}] [Batch {i+1}/{len(dataloader)}] [D loss: {d_loss.item():.3f}] [G loss: {g_loss.item():.3f}]")
 
-    # Progressive growing
+    # Progressive growing step for resolution (also save checkpoints)
     if epoch != 0 and epoch % (NUMBER_EPOCHS // 3) == 0 and new_resolution != TARGET_RESOLUTION:
+        # Save checkpoints
         save_checkpoint(epoch, generator, optimizer_G, g_loss.item(), new_resolution, f"./checkpoints/checkpoint_generator_epoch_{epoch}.pth")
         save_checkpoint(epoch, discriminator, optimizer_D, d_loss.item(), new_resolution, f"./checkpoints/checkpoint_discriminator_epoch_{epoch}.pth")
 
+        # Update resolution
         new_resolution = (new_resolution[0] * 2, new_resolution[1] * 2)
         thumbnail_dataset.resolution = new_resolution
         generator.update_img_size(new_resolution)
         discriminator.update_img_size(new_resolution)
 
-        dataloader = DataLoader(thumbnail_dataset, batch_size=max(dataloader.batch_size // 8, 1), shuffle=True)
-
+        if (new_resolution == TARGET_RESOLUTION):     
+            dataloader = DataLoader(thumbnail_dataset, batch_size=2, shuffle=True)
+        else:
+            dataloader = DataLoader(thumbnail_dataset, batch_size=dataloader.batch_size // 8, shuffle=True) 
 # Plot losses
 plt.figure()
 plt.plot(G_losses, label='Generator Loss')
