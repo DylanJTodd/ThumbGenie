@@ -55,7 +55,9 @@ if os.path.exists(metadata_src):
 
 if not os.path.exists('.cache'):
     os.makedirs('.cache')
-    
+if not os.path.exists('./thumbnail/generated'):
+    os.makedirs('./thumbnail/generated')
+
 print("Deleting...")
 
 # Clean up: remove any empty directories in the original thumbnails images directory
