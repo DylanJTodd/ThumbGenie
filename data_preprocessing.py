@@ -53,6 +53,9 @@ metadata_dest = os.path.join(THUMBNAILS_DIR, 'metadata.csv')
 if os.path.exists(metadata_src):
     shutil.move(metadata_src, metadata_dest)
 
+if not os.path.exists('.cache'):
+    os.makedirs('.cache')
+    
 print("Deleting...")
 
 # Clean up: remove any empty directories in the original thumbnails images directory

@@ -23,8 +23,6 @@ CACHE_DIR = "./.cache"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
-if not os.path.exists('.cache'):
-    os.makedirs('.cache')
 class GetImage:
     def __init__(self, image_id: str, resolution: tuple[int, int], thumbnail_dir: str) -> None:
         self.image_id = image_id
