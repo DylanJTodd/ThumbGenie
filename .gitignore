@@ -1,4 +1,2 @@
 Thumbnail
-.vector_cache
-__pycache__
-checkpoints
+.cache
