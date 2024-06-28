@@ -212,7 +212,7 @@ def train(dataloader, dataset, pipe, num_epochs, learning_rate, device, grad_acc
                     optimizer.zero_grad()
                 
                 if (batch_idx + 1) % 100 == 0:
-                    print(f"Epoch {epoch}, Batch {batch_idx}, Loss: {loss.item() * grad_accumulation_steps}")
+                    print(f"Epoch {epoch}, Batch {batch_idx+1}, Loss: {loss.item() * grad_accumulation_steps}")
                 scheduler.step(loss)
             except Exception as e:
                 print(f"Error in training loop: {e}")
