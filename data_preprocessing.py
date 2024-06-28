@@ -11,7 +11,7 @@ images_dir = os.path.join(THUMBNAILS_DIR, 'images')
 os.makedirs(images_dir, exist_ok=True)
 
 # Download the dataset
-url = "https://download1583.mediafire.com/22hy1w4nmqpgrnmGMKLlPireaOVTTgvQ4rRl3cCoorOZMHVutYdGtfIO06z8KRLW3SPFfmHPCBKMOvHfmI261xcC5hKMOeepRHy8LRAUumsg7sLyCqCC0GtHujBJKArNkAQ23C-ba34h0LeVcTMblEO8s14BYbTXeXvnOmvprNFB/dp5r3589fw3b55x/Youtube_Thumbnail_Dataset+-+Pranesh+Mukhopadhyay.zip"
+url = "https://download1583.mediafire.com/22hy1w4nmqpgrnmGMKLlPireaOVTTgvQ4rRl3cCoorOZMHVutYdGtfIO06z8KRLW3SPFfmHPCBKMOvHfmI261xcC5hKMOeepRHy8LRAUumsg7sLyCqCC0GtHujBJKArNkAQ23C-ba34h0LeVcTMblEO8s14BYbTXeXvnOmvprNFB/dp5r3589fw3b55x/Youtube_Thumbnail_Dataset+-+Pranesh+Mukhopadhyay.ziphttps://www.mediafire.com/file/dp5r3589fw3b55x/Youtube_Thumbnail_Dataset_-_Pranesh_Mukhopadhyay.zip/file"
 print("Downloading dataset...")
 response = requests.get(url)
 with open("dataset.zip", "wb") as file:
