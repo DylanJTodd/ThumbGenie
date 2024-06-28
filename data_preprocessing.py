@@ -3,6 +3,7 @@ import pandas
 import shutil
 import requests
 import zipfile
+from bs4 import BeautifulSoup
 from PIL import Image
 
 THUMBNAILS_DIR = 'thumbnail' #Don't change this
@@ -10,21 +11,37 @@ images_dir = os.path.join(THUMBNAILS_DIR, 'images')
 
 os.makedirs(images_dir, exist_ok=True)
 
-# Download the dataset
-url = "https://download1583.mediafire.com/22hy1w4nmqpgrnmGMKLlPireaOVTTgvQ4rRl3cCoorOZMHVutYdGtfIO06z8KRLW3SPFfmHPCBKMOvHfmI261xcC5hKMOeepRHy8LRAUumsg7sLyCqCC0GtHujBJKArNkAQ23C-ba34h0LeVcTMblEO8s14BYbTXeXvnOmvprNFB/dp5r3589fw3b55x/Youtube_Thumbnail_Dataset+-+Pranesh+Mukhopadhyay.ziphttps://www.mediafire.com/file/dp5r3589fw3b55x/Youtube_Thumbnail_Dataset_-_Pranesh_Mukhopadhyay.zip/file"
-print("Downloading dataset...")
-response = requests.get(url)
-with open("dataset.zip", "wb") as file:
-    file.write(response.content)
+url = "https://www.mediafire.com/file/dp5r3589fw3b55x/Youtube_Thumbnail_Dataset_-_Pranesh_Mukhopadhyay.zip/file"
 
-print("Extracting...")
-# Extract the dataset
-with zipfile.ZipFile("dataset.zip", "r") as zip_ref:
-    zip_ref.extractall(THUMBNAILS_DIR)
+def get_mediafire_direct_link(mediafire_url):
+    response = requests.get(mediafire_url)
+    soup = BeautifulSoup(response.content, 'html.parser')
+    # Look for the actual download link
+    download_link = soup.find('a', {'id': 'downloadButton'})
+    if download_link:
+        return download_link['href']
+    else:
+        raise Exception("Could not find the download link on the page")
+
+try:
+    print("Fetching Mediafire page...")
+    direct_download_url = get_mediafire_direct_link(url)
+    print("Downloading dataset...")
+    response = requests.get(direct_download_url)
+    with open("dataset.zip", "wb") as file:
+        file.write(response.content)
+
+    print("Extracting...")
+    with zipfile.ZipFile("dataset.zip", "r") as zip_ref:
+        zip_ref.extractall(THUMBNAILS_DIR)
+
+    # Delete the dataset.zip file after extraction
+    os.remove("dataset.zip")
+
+    print("Dataset downloaded and extracted successfully.")
+except Exception as e:
+    print(f"An error occurred: {e}")
     
-# Delete the dataset.zip file after extraction
-os.remove("dataset.zip")
-
 image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
 
 thumbnails_images_dir = os.path.join(THUMBNAILS_DIR, 'thumbnails', 'images')
