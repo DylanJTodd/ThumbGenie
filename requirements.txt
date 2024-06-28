@@ -11,3 +11,4 @@ pillow==10.3.0
 diffusers==0.29.1
 peft==0.11.1
 transformers==4.41.2
+beautifulsoup4==4.9.3
