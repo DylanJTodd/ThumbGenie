@@ -3,7 +3,7 @@ import torch
 import cv2
 import pandas as pd
 import numpy as np
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import ToTensor, Normalize
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchvision.utils import make_grid, save_image
@@ -74,6 +74,9 @@ class ThumbnailDataset(Dataset):
         title = row['Title']
 
         image_tensor = self._load_image(image_id)
+        if image_tensor is None:
+            return None
+        
         image_tensor = self._normalize(image_tensor)
         
         text_embeddings = self._get_text_embeddings(title, category)
@@ -180,7 +183,11 @@ def train(dataloader, dataset, pipe, num_epochs, learning_rate, device, grad_acc
     
     for epoch in range(num_epochs):
         optimizer.zero_grad()
-        for batch_idx, (images, text_embeddings, prompts) in enumerate(dataloader):
+        for batch_idx, batch in enumerate(dataloader):
+            if batch is None:
+                continue
+            
+            images, text_embeddings, prompts = batch
             try:
                 images = images.to(device).to(torch.float32)
                 text_embeddings = text_embeddings.to(device).to(torch.float32)
@@ -222,8 +229,8 @@ def train(dataloader, dataset, pipe, num_epochs, learning_rate, device, grad_acc
 
 if __name__ == "__main__":
     metadata_df = pd.read_csv(METADATA_FILE)
-    dataset = ThumbnailDataset(metadata_df, THUMBNAILS_DIR, (768, 432))
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True)
+    dataset = ThumbnailDataset(metadata_df, THUMBNAILS_DIR, (432, 768))
+    dataloader = DataLoader(dataset, batch_size=8, shuffle=True)
     
     train(dataloader, dataset, pipe, num_epochs=10, learning_rate=1e-6, device=device)
     
