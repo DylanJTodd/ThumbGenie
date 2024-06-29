@@ -230,9 +230,9 @@ def train(dataloader, dataset, pipe, num_epochs, learning_rate, device, grad_acc
 if __name__ == "__main__":
     metadata_df = pd.read_csv(METADATA_FILE)
     dataset = ThumbnailDataset(metadata_df, THUMBNAILS_DIR, (432, 768))
-    dataloader = DataLoader(dataset, batch_size=8, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=2, shuffle=True)  # Increase batch size to 8
     
-    train(dataloader, dataset, pipe, num_epochs=10, learning_rate=1e-6, device=device)
+    train(dataloader, dataset, pipe, num_epochs=10, learning_rate=1e-4, device=device)  # Increase learning rate to 1e-4
     
     title = "Exciting AI Developments"
     category = "Tech"
