@@ -139,10 +139,7 @@ def save_generated_images(images, mean, std, epoch, batch, save_dir, nrow=2):
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
         
-        image_tensors = [ToTensor()(img) for img in images]
-        image_tensors = torch.stack(image_tensors).to(device).to(torch.float32)
-        
-        image_tensors = reverse_normalize(image_tensors, mean, std)
+        image_tensors = reverse_normalize(images, mean, std)
         
         # Check for NaN or Inf values
         if torch.isnan(image_tensors).any() or torch.isinf(image_tensors).any():
@@ -220,7 +217,7 @@ def train(dataloader, dataset, pipe, num_epochs, learning_rate, device, grad_acc
         with torch.no_grad():
             latents = vae.encode(images).latent_dist.sample()
             latents = latents * vae.config.scaling_factor
-            generated_images = vae.decode(latents).sample()
+            generated_images = vae.decode(latents).sample  # Extracting the sample attribute here
             save_generated_images(generated_images, dataset.mean, dataset.std, epoch, batch_idx, "./thumbnail/generated")
 
 if __name__ == "__main__":
@@ -237,6 +234,6 @@ if __name__ == "__main__":
     with torch.no_grad():
         latents = pipe.vae.encode(text_embeddings).latent_dist.sample()
         latents = latents * pipe.vae.config.scaling_factor
-        image = pipe.vae.decode(latents).sample()[0]
+        image = pipe.vae.decode(latents).sample  # Extracting the sample attribute here
     
-    image.save("generated_thumbnail.png")
+    save_image(image, "generated_thumbnail.png")
