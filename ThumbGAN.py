@@ -132,8 +132,6 @@ def logit_normal_timestep_sampling(shape, device):
 def reverse_normalize(tensor, mean, std):
     mean = mean.to(device).view(1, 3, 1, 1)
     std = std.to(device).view(1, 3, 1, 1)
-    tensor = tensor.to(device)
-
     tensor = tensor * std + mean
     tensor = torch.clamp(tensor, 0, 1)
     return tensor
@@ -156,7 +154,10 @@ def save_generated_images(images, mean, std, epoch, batch, save_dir, nrow=2):
         image_grid_np = (image_grid.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
         
         save_path = os.path.join(save_dir, f"epoch_{epoch+1}_batch_{batch+1}.png")
-        cv2.imwrite(save_path, cv2.cvtColor(image_grid_np.transpose(1, 2, 0), cv2.COLOR_RGB2BGR))
+        
+        # Convert image_grid_np from RGB to BGR before saving
+        image_bgr = cv2.cvtColor(image_grid_np.transpose(1, 2, 0), cv2.COLOR_RGB2BGR)
+        cv2.imwrite(save_path, image_bgr)
     except Exception as e:
         print(f"Error saving generated images: {e}")
 
@@ -231,7 +232,7 @@ def train(dataloader, dataset, pipe, num_epochs, learning_rate, device, grad_acc
 if __name__ == "__main__":
     metadata_df = pd.read_csv(METADATA_FILE)
     dataset = ThumbnailDataset(metadata_df, THUMBNAILS_DIR, (432, 768))
-    dataloader = DataLoader(dataset, batch_size=8, shuffle=True)  # Increase batch size to 8
+    dataloader = DataLoader(dataset, batch_size=2, shuffle=True)  # Reduce batch size to 2
     
     train(dataloader, dataset, pipe, num_epochs=10, learning_rate=1e-4, device=device)  # Increase learning rate to 1e-4
     
