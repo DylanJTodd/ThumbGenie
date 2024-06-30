@@ -6,7 +6,7 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import ToTensor, Normalize, ColorJitter, RandomHorizontalFlip, RandomAffine
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torchvision.utils import make_grid, save_image
+from torchvision.utils import make_grid
 from transformers import DistilBertTokenizer, DistilBertModel
 from diffusers import StableDiffusionPipeline, DPMSolverMultistepScheduler
 from peft import LoraConfig, get_peft_model
@@ -207,14 +207,17 @@ def train(dataloader, dataset, pipe, num_epochs, learning_rate, device, grad_acc
     scaler = torch.cuda.amp.GradScaler()
 
     # Load checkpoint if specified
-    if checkpoint and os.path.exists(checkpoint):
-        checkpoint_data = torch.load(checkpoint, map_location=device)
-        pipe.unet.load_state_dict(checkpoint_data['model_state_dict'])
-        optimizer.load_state_dict(checkpoint_data['optimizer_state_dict'])
-        scheduler.load_state_dict(checkpoint_data['scheduler_state_dict'])
-        print(f"Loaded checkpoint from {checkpoint}")
+    if checkpoint:
+        try:
+            checkpoint_data = torch.load(checkpoint, map_location=device)
+            pipe.unet.load_state_dict(checkpoint_data['model_state_dict'])
+            optimizer.load_state_dict(checkpoint_data['optimizer_state_dict'])
+            scheduler.load_state_dict(checkpoint_data['scheduler_state_dict'])
+            print(f"Loaded checkpoint from {checkpoint}")
+        except Exception as e:
+            print(f"Failed to load checkpoint: {e}. Starting training from scratch.")
     else:
-        print(f"No valid checkpoint found. Starting training from scratch.")
+        print(f"No checkpoint provided. Starting training from scratch.")
     
     for epoch in range(num_epochs):
         optimizer.zero_grad()
@@ -268,6 +271,13 @@ def train(dataloader, dataset, pipe, num_epochs, learning_rate, device, grad_acc
         }, checkpoint_path)
         print(f"Saved checkpoint: {checkpoint_path}")
 
+        # Verify the checkpoint after saving
+        try:
+            torch.load(checkpoint_path, map_location=DEVICE)
+            print(f"Checkpoint verified successfully: {checkpoint_path}")
+        except Exception as e:
+            print(f"Failed to verify checkpoint: {e}")
+
         # Generate and save images after each epoch
         with torch.no_grad():
             latents = vae.encode(images).latent_dist.sample()
@@ -287,7 +297,14 @@ if __name__ == "__main__":
     dataloader = DataLoader(dataset, batch_size=8, shuffle=True)
     
     # Specify checkpoint path if available, or use None
-    checkpoint_path = None  # e.g., "./checkpoints/checkpoint_epoch_1.pt" if resuming
+    checkpoint_path = "./checkpoints/checkpoint_epoch_13.pt"  # e.g., "./checkpoints/checkpoint_epoch_1.pt" if resuming
+
+    # Verify the checkpoint
+    try:
+        torch.load(checkpoint_path, map_location=DEVICE)
+    except Exception as e:
+        print(f"Checkpoint verification failed: {e}")
+        checkpoint_path = None  # Ignore checkpoint if invalid
 
     train(dataloader, dataset, pipe, num_epochs=50, learning_rate=1e-4, device=DEVICE, checkpoint=checkpoint_path)
     
