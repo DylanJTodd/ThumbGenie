@@ -27,6 +27,10 @@ GENERATED_IMAGE_DIR = "./thumbnail/generated"
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {DEVICE}")
 
+# Configurable variables
+CHECKPOINT_SAVE_INTERVAL = 2  # Save checkpoint every 2 epochs
+BATCH_SIZE = 8  # Default batch size
+
 class GetImage:
     def __init__(self, image_id: str, resolution: tuple[int, int], thumbnail_dir: str) -> None:
         self.image_id = image_id
@@ -206,6 +210,8 @@ def train(dataloader, dataset, pipe, num_epochs, learning_rate, device, grad_acc
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True)
     scaler = torch.cuda.amp.GradScaler()
 
+    start_epoch = 0  # Initialize start epoch
+
     # Load checkpoint if specified
     if checkpoint:
         try:
@@ -213,13 +219,18 @@ def train(dataloader, dataset, pipe, num_epochs, learning_rate, device, grad_acc
             pipe.unet.load_state_dict(checkpoint_data['model_state_dict'])
             optimizer.load_state_dict(checkpoint_data['optimizer_state_dict'])
             scheduler.load_state_dict(checkpoint_data['scheduler_state_dict'])
-            print(f"Loaded checkpoint from {checkpoint}")
+            start_epoch = checkpoint_data.get('epoch', 0)  # Load the epoch if available
+            print(f"Loaded checkpoint from {checkpoint} at epoch {start_epoch}")
+            
+            # Clear CUDA cache to prevent memory issues
+            torch.cuda.empty_cache()
+
         except Exception as e:
             print(f"Failed to load checkpoint: {e}. Starting training from scratch.")
     else:
         print(f"No checkpoint provided. Starting training from scratch.")
     
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch, num_epochs):
         optimizer.zero_grad()
         for batch_idx, batch in enumerate(dataloader):
             if batch is None:
@@ -254,29 +265,31 @@ def train(dataloader, dataset, pipe, num_epochs, learning_rate, device, grad_acc
                     optimizer.zero_grad()
                 
                 if (batch_idx + 1) % 100 == 0:
-                    print(f"Epoch {epoch}, Batch {batch_idx+1}, Loss: {loss.item() * grad_accumulation_steps}")
+                    print(f"Epoch {epoch}/{num_epochs}, Batch {batch_idx+1}, Loss: {loss.item() * grad_accumulation_steps}")
                 scheduler.step(loss)
             except Exception as e:
                 print(f"Error in training loop: {e}")
                 continue
         
-        # Save checkpoint after each epoch
-        if not os.path.exists(CHECKPOINT_DIR):
-            os.makedirs(CHECKPOINT_DIR)
-        checkpoint_path = os.path.join(CHECKPOINT_DIR, f"{CHECKPOINT_PREFIX}_{epoch+1}.pt")
-        torch.save({
-            'model_state_dict': pipe.unet.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'scheduler_state_dict': scheduler.state_dict()
-        }, checkpoint_path)
-        print(f"Saved checkpoint: {checkpoint_path}")
+        # Save checkpoint based on the specified interval
+        if epoch % CHECKPOINT_SAVE_INTERVAL == 0 or epoch == num_epochs - 1:
+            if not os.path.exists(CHECKPOINT_DIR):
+                os.makedirs(CHECKPOINT_DIR)
+            checkpoint_path = os.path.join(CHECKPOINT_DIR, f"{CHECKPOINT_PREFIX}_{epoch+1}.pt")
+            torch.save({
+                'epoch': epoch + 1,
+                'model_state_dict': pipe.unet.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict()
+            }, checkpoint_path)
+            print(f"Saved checkpoint: {checkpoint_path}")
 
-        # Verify the checkpoint after saving
-        try:
-            torch.load(checkpoint_path, map_location=DEVICE)
-            print(f"Checkpoint verified successfully: {checkpoint_path}")
-        except Exception as e:
-            print(f"Failed to verify checkpoint: {e}")
+            # Verify the checkpoint after saving
+            try:
+                torch.load(checkpoint_path, map_location=DEVICE)
+                print(f"Checkpoint verified successfully: {checkpoint_path}")
+            except Exception as e:
+                print(f"Failed to verify checkpoint: {e}")
 
         # Generate and save images after each epoch
         with torch.no_grad():
@@ -294,7 +307,7 @@ def train(dataloader, dataset, pipe, num_epochs, learning_rate, device, grad_acc
 if __name__ == "__main__":
     metadata_df = pd.read_csv(METADATA_FILE)
     dataset = ThumbnailDataset(metadata_df, THUMBNAILS_DIR, (720, 1280))
-    dataloader = DataLoader(dataset, batch_size=8, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
     
     # Specify checkpoint path if available, or use None
     checkpoint_path = "./checkpoints/checkpoint_epoch_13.pt"  # e.g., "./checkpoints/checkpoint_epoch_1.pt" if resuming
