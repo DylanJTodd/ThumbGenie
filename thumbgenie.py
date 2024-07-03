@@ -1,6 +1,8 @@
 import os
 import torch
 import numpy as np
+import requests
+from bs4 import BeautifulSoup
 from transformers import DistilBertTokenizer, DistilBertModel
 from diffusers import StableDiffusionPipeline, DPMSolverMultistepScheduler
 from peft import get_peft_model, LoraConfig
@@ -11,19 +13,49 @@ from torchvision.utils import save_image
 TITLE_MAX_LENGTH = 128
 CATEGORY_EMBEDDING_WEIGHT = 2.0
 
+MEDIAFIRE_URL = "https://www.mediafire.com/file/hxj2h3gn0y6ibtz/unet_final-001.pt/file" #Default trained model
 CACHE_DIR = "./.cache"
 GENERATED_IMAGE_DIR = "./generated_images"
 CATEGORIES = ["science", "news", "food", "blog", "tech", "informative", "comedy", "entertainment", "automobile", "videogames"]
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-#Configurable constants
-IMAGE_RESOLUTION = (720, 1280) # Height, Width USE SAME RESOLUTION AS TRAINING IMAGES
-FINAL_MODEL_PATH = None
+# Configurable constants
+IMAGE_RESOLUTION = (720, 1280)  # Height, Width USE SAME RESOLUTION AS TRAINING IMAGES
+FINAL_MODEL_PATH = None  # None as default to use the basic trained model. BE AWARE: WAS NOT TRAINED WELL DUE TO LIMITED RESOURCES
 
 os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs(GENERATED_IMAGE_DIR, exist_ok=True)
-if not os.path.exists(FINAL_MODEL_PATH):
-    raise FileNotFoundError(f"Model file not found at path: {FINAL_MODEL_PATH}")
+
+# Function to get the direct download link from Mediafire if using default model
+def get_mediafire_direct_link(mediafire_url: str) -> str:
+    response = requests.get(mediafire_url)
+    soup = BeautifulSoup(response.content, 'html.parser')
+    download_link = soup.find('a', {'id': 'downloadButton'})
+    if download_link:
+        return download_link['href']
+    else:
+        raise Exception("Could not find the download link on the page")
+
+# Function to download the file
+def download_file(url: str, save_path:str ) -> None:
+    response = requests.get(url, stream=True)
+    with open(save_path, 'wb') as file:
+        for chunk in response.iter_content(chunk_size=8192):
+            file.write(chunk)
+
+# Check if FINAL_MODEL_PATH is None and update it
+if FINAL_MODEL_PATH is None:
+    print("Final Model Path set as 'None'... Downloading default model...")
+    
+    FINAL_MODEL_PATH = "./final_model/unet_final-001.pt"
+    os.makedirs(os.path.dirname(FINAL_MODEL_PATH), exist_ok=True)
+    direct_link = get_mediafire_direct_link(MEDIAFIRE_URL)
+    download_file(direct_link, FINAL_MODEL_PATH)
+
+    print(f"Default model has been downloaded and saved to {FINAL_MODEL_PATH}")
+else:
+    if not os.path.exists(FINAL_MODEL_PATH):
+        raise FileNotFoundError(f"Model file not found at {FINAL_MODEL_PATH}")
 
 #Use DistilBert pretrained tokenizer and model to preprocess text
 def preprocess_text(title: str, category: str) -> torch.Tensor:
