@@ -3,7 +3,9 @@ import torch
 import cv2
 import pandas as pd
 import numpy as np
+import torch.utils
 from torch.utils.data import Dataset, DataLoader
+import torch.utils.data
 from torchvision.transforms import ToTensor, Normalize, ColorJitter, RandomHorizontalFlip, RandomAffine
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchvision.utils import make_grid
@@ -11,25 +13,30 @@ from transformers import DistilBertTokenizer, DistilBertModel
 from diffusers import StableDiffusionPipeline, DPMSolverMultistepScheduler
 from peft import LoraConfig, get_peft_model
 import warnings
-
 warnings.filterwarnings("ignore", message="Torch was not compiled with flash attention")
 
 # Constants
-THUMBNAILS_DIR = './thumbnail'
-METADATA_FILE = './thumbnail/metadata.csv'
 TITLE_MAX_LENGTH = 128
 CATEGORY_EMBEDDING_WEIGHT = 2.0
+LEARNING_RATE = 1e-4
+
+THUMBNAILS_DIR = './thumbnail'
+METADATA_FILE = './thumbnail/metadata.csv'
 CACHE_DIR = "./.cache"
 CHECKPOINT_DIR = "./checkpoints"
 CHECKPOINT_PREFIX = "checkpoint_epoch"
 FINAL_MODEL_PATH = "./final_model"
 GENERATED_IMAGE_DIR = "./thumbnail/generated"
+
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {DEVICE}")
 
-# Configurable variables
+# Configurable constants
 CHECKPOINT_SAVE_INTERVAL = 2  # Save checkpoint every 2 epochs
-BATCH_SIZE = 8  # Default batch size
+BATCH_SIZE = 1  # Default batch size
+EPOCHS = 10  # Default number of epochs
+IMAGE_RESOLUTION = (720, 1280) #Reverse order for OpenCV compatibility
+CHECKPOINT_PATH = None  # Specify checkpoint path if available, or use None
 
 class GetImage:
     def __init__(self, image_id: str, resolution: tuple[int, int], thumbnail_dir: str) -> None:
@@ -38,7 +45,7 @@ class GetImage:
         self.thumbnail_dir = thumbnail_dir
         self.extensions = ['.jpg', '.jpeg', '.png', '.bmp']
 
-    def get(self) -> torch.Tensor:
+    def get(self) -> torch.Tensor | None:
         image_path = self._find_image_path()
         if not image_path:
             print(f"Image ID {self.image_id} was not found.")
@@ -68,6 +75,9 @@ class ThumbnailDataset(Dataset):
         self.resolution = resolution[::-1]
         self.title_max_length = TITLE_MAX_LENGTH
 
+        if not os.path.exists(CACHE_DIR):
+            os.makedirs(CACHE_DIR)
+            
         self.tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased', cache_dir=CACHE_DIR)
         self.text_encoder = DistilBertModel.from_pretrained('distilbert-base-uncased', cache_dir=CACHE_DIR).to(DEVICE)
 
@@ -83,7 +93,7 @@ class ThumbnailDataset(Dataset):
     def __len__(self) -> int:
         return len(self.metadata_df)
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, str]:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, str] | None:
         row = self.metadata_df.iloc[idx]
         image_id = row['Id']
         category = row['Category']
@@ -106,12 +116,14 @@ class ThumbnailDataset(Dataset):
         get_image = GetImage(image_id, self.resolution, self.thumbnail_dir)
         return get_image.get()
 
+    #Ensure images are evenly distributed between 0 and 1
     def _normalize(self, image: torch.Tensor) -> torch.Tensor:
-        image = image.clamp(0, 1)  # Ensure values are between 0 and 1
+        image = image.clamp(0, 1)
         transform = Normalize(mean=self.mean.to(DEVICE), std=self.std.to(DEVICE))
         normalized = transform(image)
         return normalized.clamp(-1, 1)
 
+    #Get text embeddings using DistilBERT
     def _get_text_embeddings(self, title: str, category: str) -> torch.Tensor:
         category_emphasis = ' '.join([category] * int(CATEGORY_EMBEDDING_WEIGHT))
         combined_text = f"{category_emphasis} {title}"
@@ -122,7 +134,8 @@ class ThumbnailDataset(Dataset):
             outputs = self.text_encoder(**inputs)
         
         return outputs.last_hidden_state.squeeze(0)
-
+    
+    #Calculate mean and standard deviation for normalization
     def calculate_normalization_params(self) -> tuple[torch.Tensor, torch.Tensor]:
         mean = torch.zeros(3, device=DEVICE)
         std = torch.zeros(3, device=DEVICE)
@@ -140,12 +153,14 @@ class ThumbnailDataset(Dataset):
             std /= valid_images
         
         return mean.to(torch.float32), std.to(torch.float32)
-
-def logit_normal_timestep_sampling(shape, device):
+    
+#Sampling timesteps from a logit-normal distribution
+def logit_normal_timestep_sampling(shape, device: torch.device) -> torch.Tensor:
     u = torch.randn(shape, device=device, dtype=torch.float32)
     return torch.sigmoid(u)
 
-def reverse_normalize(tensor, mean, std):
+#Undo the normalization for reverse preprocessing
+def reverse_normalize(tensor: torch.Tensor, mean: float, std: float) -> torch.Tensor:
     mean = mean.to(DEVICE).view(1, 3, 1, 1)
     std = std.to(DEVICE).view(1, 3, 1, 1)
     tensor = tensor.to(DEVICE)
@@ -154,28 +169,24 @@ def reverse_normalize(tensor, mean, std):
     tensor = torch.clamp(tensor, 0, 1)
     return tensor
 
-def save_generated_images(images, mean, std, epoch, batch, save_dir, nrow=2):
+def save_generated_images(images: torch.Tensor , mean: torch.Tensor, std: torch.Tensor, epoch: int, batch: int, save_dir: str, nrow: int = 2) -> None:
     try:
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
         
         image_tensors = reverse_normalize(images, mean, std)
         
-        # Convert to uint8 and apply contrast enhancement
         image_np = (image_tensors.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
-        image_np = image_np.transpose(0, 2, 3, 1)  # NCHW to NHWC
+        image_np = image_np.transpose(0, 2, 3, 1)
         
         enhanced_images = []
         for img in image_np:
-            # Convert to LAB color space
             lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
             l, a, b = cv2.split(lab)
             
-            # Apply CLAHE to L channel
             clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
             cl = clahe.apply(l)
             
-            # Merge channels and convert back to RGB
             limg = cv2.merge((cl,a,b))
             enhanced = cv2.cvtColor(limg, cv2.COLOR_LAB2RGB)
             enhanced_images.append(enhanced)
@@ -205,12 +216,12 @@ pipe.safety_checker = None
 
 vae = pipe.vae
 
-def train(dataloader, dataset, pipe, num_epochs, learning_rate, device, grad_accumulation_steps=4, checkpoint=None):
+def train(dataloader: DataLoader, dataset: Dataset, pipe: StableDiffusionPipeline, num_epochs: int, learning_rate: float, device: str, grad_accumulation_steps: int = 4, checkpoint: str = None) -> None:
     optimizer = torch.optim.AdamW(pipe.unet.parameters(), lr=learning_rate)
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True)
     scaler = torch.cuda.amp.GradScaler()
 
-    start_epoch = 0  # Initialize start epoch
+    start_epoch = 0
 
     # Load checkpoint if specified
     if checkpoint:
@@ -221,8 +232,7 @@ def train(dataloader, dataset, pipe, num_epochs, learning_rate, device, grad_acc
             scheduler.load_state_dict(checkpoint_data['scheduler_state_dict'])
             start_epoch = checkpoint_data.get('epoch', 0)  # Load the epoch if available
             print(f"Loaded checkpoint from {checkpoint} at epoch {start_epoch}")
-            
-            # Clear CUDA cache to prevent memory issues
+        
             torch.cuda.empty_cache()
 
         except Exception as e:
@@ -258,7 +268,7 @@ def train(dataloader, dataset, pipe, num_epochs, learning_rate, device, grad_acc
                 scaler.scale(loss).backward()
 
                 if (batch_idx + 1) % grad_accumulation_steps == 0:
-                    scaler.unscale_(optimizer)  # Unscale gradients for gradient clipping or NaN checks
+                    scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(pipe.unet.parameters(), max_norm=1.0)
                     scaler.step(optimizer)
                     scaler.update()
@@ -306,33 +316,14 @@ def train(dataloader, dataset, pipe, num_epochs, learning_rate, device, grad_acc
 
 if __name__ == "__main__":
     metadata_df = pd.read_csv(METADATA_FILE)
-    dataset = ThumbnailDataset(metadata_df, THUMBNAILS_DIR, (720, 1280))
+    dataset = ThumbnailDataset(metadata_df, THUMBNAILS_DIR, IMAGE_RESOLUTION)
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
-    
-    # Specify checkpoint path if available, or use None
-    checkpoint_path = "./checkpoints/checkpoint_epoch_13.pt"  # e.g., "./checkpoints/checkpoint_epoch_1.pt" if resuming
 
     # Verify the checkpoint
     try:
-        torch.load(checkpoint_path, map_location=DEVICE)
+        torch.load(CHECKPOINT_PATH, map_location=DEVICE)
     except Exception as e:
         print(f"Checkpoint verification failed: {e}")
-        checkpoint_path = None  # Ignore checkpoint if invalid
+        CHECKPOINT_PATH = None
 
-    train(dataloader, dataset, pipe, num_epochs=50, learning_rate=1e-4, device=DEVICE, checkpoint=checkpoint_path)
-    
-    # Generate new images
-    title = "Exciting AI Developments"
-    category = "Tech"
-    prompt = f"{category} {title}"
-    
-    num_images_to_generate = 4
-    generator = torch.Generator(device=DEVICE).manual_seed(42)  # for reproducibility
-    
-    with torch.no_grad():
-        images = pipe(
-            prompt,
-            num_images_per_prompt=num_images_to_generate,
-            generator=generator,
-            guidance_scale=7.5
-        ).images
+    train(dataloader, dataset, pipe, num_epochs=EPOCHS, learning_rate=LEARNING_RATE, device=DEVICE, checkpoint=CHECKPOINT_PATH)
