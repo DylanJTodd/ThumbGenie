@@ -9,8 +9,8 @@ You can see some examples *below:*
 
 ## **How to use:**
 
- - **[Manually:](https://github.com/DylanJTodd/ThumbGenie/main/README.md#manually)**
- - **[Through Google Colab](https://github.com/DylanJTodd/ThumbGenie/main/README.md#through-google-colab)**
+ - **[Manually:](https://github.com/DylanJTodd/ThumbGenie?tab=readme-ov-file#manually)**
+ - **[Through Google Colab](https://github.com/DylanJTodd/ThumbGenie?tab=readme-ov-file#through-google-colab)**
 
 
 ## Manually
